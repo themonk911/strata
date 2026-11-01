@@ -4,9 +4,11 @@ import { mkdtemp, readFile, writeFile, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 import { createVideoProject } from '../server/video-template.mjs';
 
 const ids = ['origin', 'boundaries', 'growth', 'pressure', 'findings', 'focus', 'outlook'];
+const playback = ['origin', 'growth', 'boundaries', 'pressure', 'findings', 'focus', 'outlook'];
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1sAAAAASUVORK5CYII=', 'base64');
 function fixture({ shortcuts = true, inferred = false, entropy, name = 'Lighthouse', privateRepo = false, selected = true } = {}) {
   const make = (latest) => ({ date: latest ? '2026-10-01' : '2026-09-01',
@@ -31,10 +33,12 @@ test('builds a portable recording project using measured current endpoints and n
   input.story.chapters[2].snapshot = 0; input.story.chapters[3].snapshot = 0;
   input.data.snapshots[1].files['new.js'] = { district: 'ledger', lines: 7, source: 'DO_NOT_EXPORT_SOURCE' };
   const result = await createVideoProject(input), value = await report(result);
-  assert.deepEqual(result.scenes.map(s => s.id), ids);
+  assert.deepEqual(result.scenes.map(s => s.id), playback);
+  assert.equal(value.chapters.origin.snapshot, 1); assert.equal(value.chapters.origin.title, 'Lighthouse today');
   assert.equal(value.chapters.growth.snapshot, 1); assert.equal(value.chapters.pressure.snapshot, 1);
   assert.equal(value.history[1].files, 3); assert.equal(value.history[1].lines, 47);
-  assert.match(result.scenes[2].text, /from 2 to 3 source files/);
+  assert.equal(result.scenes[0].text, "Here's Lighthouse today.");
+  assert.equal(result.scenes[1].text, input.story.chapters[2].caption);
   assert.equal(value.privacyLabel, 'Public repository'); assert.equal(value.history[1].entropy, null);
   assert.equal(value.focus.target, 'ledger/private.js'); assert.equal(value.focus.importers, 1);
   assert.ok(!JSON.stringify(value).includes('DO_NOT_EXPORT_SOURCE'));
@@ -44,8 +48,11 @@ test('builds a portable recording project using measured current endpoints and n
   assert.equal((script.match(/\[#start\]/g) || []).length, 7);
   assert.equal((script.match(/\[#detail\]/g) || []).length, 7);
   assert.equal((script.match(/\[#finish\]/g) || []).length, 7);
-  assert.match(script, /\{API\|A, P, I\}/);
-  assert.match(result.scenes[1].text, /A, P, I/);
+  assert.match(script, /Modules have \[#detail\] public entry points\. \[#finish\] Violet/);
+  assert.ok(!script.includes('min='));
+  assert.equal(config.end, .6);
+  assert.equal((script.match(/lead=0\.05 hold=0\.15/g) || []).length, 7);
+  assert.ok(value.wordCount <= 85);
   const credits = await readFile(join(result.projectPath, 'CREDITS.md'), 'utf8');
   assert.match(credits, /Explainroo 0.4.1/); assert.match(credits, /AI-generated OpenAI/);
   assert.ok(!credits.includes(input.directory));
@@ -76,13 +83,13 @@ test('zero shortcuts and no selected district stay explicit without fabricating 
   const value = await report(result);
   assert.deepEqual(value.ranked, []); assert.equal(value.focus, null);
   assert.match(result.scenes[4].text, /No private-import shortcuts are detected/);
-  assert.match(result.scenes[5].text, /No module is selected/);
+  assert.match(result.scenes[5].text, /before choosing a module/);
 });
 
 test('inferred gates remain qualified in narration and visual data', async t => {
   const result = await createVideoProject({ ...await sandbox(t), ...fixture({ inferred: true }) });
   assert.equal((await report(result)).focus.inferred, true);
-  assert.match(result.scenes[5].text, /inferred gate/);
+  assert.match(result.scenes[5].text, /Confirm the intended entry point/);
 });
 
 test('repository text is serialized as inert data and portraits are credited as generated', async t => {
@@ -99,9 +106,32 @@ test('repository text is serialized as inert data and portraits are credited as 
 test('rejects overlong narration and script control syntax before creating the project', async t => {
   const input = { ...await sandbox(t), ...fixture() };
   for (const chapter of input.story.chapters) chapter.caption = 'code '.repeat(39).trim();
-  await assert.rejects(createVideoProject(input), /limit is 180/);
+  await assert.rejects(createVideoProject(input), /limit is 105/);
   await assert.rejects(access(input.directory));
-  input.story = fixture().story; input.story.chapters[0].caption = 'Review [#evil] the public boundary.';
+  input.story = fixture().story; input.story.chapters[2].caption = 'Review [#evil] the public boundary.';
   await assert.rejects(createVideoProject(input), /script control syntax/);
   await assert.rejects(access(input.directory));
+});
+
+test('historical Decisions counts cover only matching submitted commits and omit raw evidence', async t => {
+  const input = { ...await sandbox(t), ...fixture() };
+  const before = 'a'.repeat(40), after = 'b'.repeat(40);
+  input.data.snapshots[0].revision = before.slice(0, 12); input.data.snapshots[1].revision = after.slice(0, 12);
+  const history = { status: 'ready', model: 'gpt-6-luna', datasetHash: createHash('sha256').update(JSON.stringify(input.data)).digest('hex'), skipped: 7,
+    entries: [{ id: after, revision: after, beforeSnapshotRevision: before, beforeSnapshot: 0, afterSnapshot: 1,
+      status: 'classified', label: 'feature', confidence: .9, subject: 'PRIVATE_COMMIT_SUBJECT', patch: 'PRIVATE_PATCH' }] };
+  const result = await createVideoProject({ ...input, history }), value = await report(result);
+  assert.deepEqual(value.decisions, { model: 'gpt-6-luna', reviewed: 1, skipped: 7, counts: { feature: 1, repair: 0, reversal: 0, unclear: 0, refused: 0 } });
+  assert.ok(!JSON.stringify(value).includes('PRIVATE_'));
+  const credits = await readFile(join(result.projectPath, 'CREDITS.md'), 'utf8');
+  assert.match(credits, /not a classification of all history/);
+  assert.ok(!credits.includes('PRIVATE_'));
+  history.entries[0] = { ...history.entries[0], status: 'refused', label: undefined };
+  const refused = await report(await createVideoProject({ ...input, history }));
+  assert.equal(refused.decisions.counts.refused, 1); assert.equal(refused.decisions.counts.feature, 0);
+  history.entries = [];
+  const empty = await report(await createVideoProject({ ...input, history }));
+  assert.equal(empty.decisions.reviewed, 0);
+  history.datasetHash = 'unrelated';
+  await assert.rejects(createVideoProject({ ...input, history }), /do not match/);
 });

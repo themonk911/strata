@@ -57,14 +57,14 @@ function signal(s, id, label, y, at) {
 
 export default {
   origin(s) {
-    header(s, 'origin', '01 / REPOSITORY HISTORY');
-    city(s, 'origin', '#start');
-    metric(s, number(point('origin').files), 'source files at the start', 445, 443, '#detail');
-    text(s, point('origin').date, 445, 635, '#finish', { size: 38, align: 'center', maxWidth: 610 });
-    text(s, 'Measured city · AI narration', 1280, 862, '#finish', { size: 36, color: 'muted', align: 'center', maxWidth: 1000 });
+    header(s, 'origin', '01 / CURRENT CODEBASE');
+    city(s, 'outlook', '#start');
+    metric(s, number(point('origin').files), 'source files today', 445, 443, '#start');
+    text(s, point('origin').date, 445, 635, '#detail', { size: 38, align: 'center', maxWidth: 610 });
+    text(s, 'Measured city · AI narration', 1280, 862, '#start', { size: 36, color: 'muted', align: 'center', maxWidth: 1000 });
   },
   boundaries(s) {
-    header(s, 'boundaries', '02 / READING THE BOUNDARIES');
+    header(s, 'boundaries', '03 / READING THE BOUNDARIES');
     s.draw({ x: 1360, y: 557, at: '#start' }, ctx => { ctx.fillStyle = '#e4e9dd'; ctx.strokeStyle = '#9eae95'; ctx.lineWidth = 3; ctx.beginPath(); ctx.roundRect(-380, -215, 760, 430, 30); ctx.fill(); ctx.stroke(); });
     text(s, 'A MODULE', 1360, 392, '#start', { size: 36, font: 'mono', align: 'center', maxWidth: 650 });
     s.box('Another module', { id: 'caller', x: 420, y: 577, w: 420, h: 130, size: 42, fill: '#fbfaf6', stroke: C.line, at: '#start', sfx: false });
@@ -75,13 +75,21 @@ export default {
     text(s, 'Illustrative diagram · violet bypasses the public API', 960, 846, '#finish', { size: 36, align: 'center', color: 'muted', maxWidth: 1580 });
   },
   growth(s) {
-    header(s, 'growth', '03 / CODE GROWTH');
-    city(s, 'origin', '#start', { x: 700, y: 580, w: 1020, out: '#detail' });
-    city(s, 'growth', '#detail', { x: 700, y: 580, w: 1020 });
-    metric(s, number(report.history[0].files), 'source files', 1490, 451, '#start', { out: '#detail', exit: 'none' });
-    metric(s, number(point('growth').files), 'source files', 1490, 451, '#detail');
-    text(s, `${report.history[0].date} → ${point('growth').date}`, 1490, 650, '#detail', { size: 36, align: 'center', maxWidth: 520 });
-    text(s, `${number(point('growth').lines)} source lines`, 1490, 763, '#finish', { size: 42, align: 'center', maxWidth: 520 });
+    header(s, 'growth', '02 / GROWTH & REVIEWED HISTORY');
+    city(s, 'origin', '#start', { x: 700, y: 610, w: 1020, out: '#detail' });
+    city(s, 'growth', '#detail', { x: 700, y: 610, w: 1020 });
+    metric(s, `${number(report.history[0].files)} → ${number(point('growth').files)}`, 'source files', 1490, 390, '#start', { size: 112 });
+    const decisions = report.decisions;
+    if (decisions) {
+      text(s, `${number(decisions.reviewed)} reviewed commits`, 1490, 585, '#detail', { size: 40, align: 'center', maxWidth: 530 });
+      text(s, `${number(decisions.counts.feature)} feature · ${number(decisions.counts.repair)} repair`, 1490, 650, '#detail', { size: 36, align: 'center', maxWidth: 530 });
+      text(s, `${number(decisions.counts.reversal)} reversal · ${number(decisions.counts.unclear)} unclear`, 1490, 710, '#finish', { size: 36, align: 'center', maxWidth: 530 });
+      text(s, `${number(decisions.counts.refused)} refused · ${number(decisions.skipped)} skipped`, 1490, 770, '#finish', { size: 36, align: 'center', maxWidth: 530, color: 'muted' });
+      text(s, 'Decisions · model labels', 1490, 846, '#finish', { size: 36, align: 'center', maxWidth: 530, color: 'muted' });
+    } else {
+      text(s, `${number(point('growth').lines)} source lines`, 1490, 650, '#detail', { size: 42, align: 'center', maxWidth: 520 });
+      text(s, 'History labels unavailable', 1490, 775, '#finish', { size: 36, align: 'center', maxWidth: 520, color: 'muted' });
+    }
   },
   pressure(s) {
     header(s, 'pressure', '04 / LAST SNAPSHOT · EXPERIMENTAL');

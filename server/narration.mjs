@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 export const NARRATION_MODEL = 'gpt-audio-1.5';
 export const NARRATION_VOICE = 'marin';
-export const NARRATION_LIMITS = Object.freeze({ words: 180, clips: 7, perVideoUSD: 1, totalUSD: 5, reservationUSD: .08 });
+export const NARRATION_LIMITS = Object.freeze({ words: 105, clips: 7, targetSeconds: 40, productionSeconds: 50, paddingSeconds: 2, perVideoUSD: 1, totalUSD: 5, reservationUSD: .08 });
 // Frozen v1 request identity: changing delivery instructions must never erase
 // a paid attempt, reset its retry allowance, or rebuy an approved recording.
 const LEGACY_INSTRUCTION = 'Read the user passage exactly as written, with no introduction, explanation, extra words, or music. Use a natural, calm adult British English voice, conversational and clear, as if explaining a tool to a colleague. No advertising delivery, dramatic emphasis, exaggerated cheerfulness, or breathy whisper. Keep a steady conversational pace, around 160 words per minute, with short natural pauses between sentences. Preserve every word and number. Pronounce Strata as STRAH-tuh. Articulate every word and consonant clearly. Read all sentences verbatim, in order; do not omit or paraphrase. Keep the voice consistent across this short narration.';
@@ -34,7 +34,7 @@ export function validateScenes(scenes) {
     if (!scene || !/^[a-z][a-z0-9_-]{0,40}$/.test(scene.id) || ids.has(scene.id) || typeof scene.text !== 'string' || !scene.text.trim() || /[\x00-\x1f{}\[\]]/.test(scene.text)) throw new Error('Narration contains an invalid scene.');
     ids.add(scene.id); words += scene.text.trim().split(/\s+/).length;
   }
-  if (words > 180) throw new Error('The video script exceeds 180 spoken words. Shorten the storyboard before generating audio.');
+  if (words > NARRATION_LIMITS.words) throw new Error('The video script exceeds 105 spoken words. Shorten the storyboard before generating audio.');
   return words;
 }
 export function canonicalWav(bytes) {
@@ -149,9 +149,9 @@ export class NarrationService {
         const ledger = await readJSON(ledgerPath); const index = ledger.calls.findIndex(c => c.hash === keyHash); ledger.calls[index] = call;
         ledger.estimatedUSD = rounded(ledger.calls.reduce((n, c) => n + (c.estimatedUSD || 0), 0)); await atomicWrite(ledgerPath, JSON.stringify(ledger, null, 2));
       }
-      if (durationSeconds + 8 > 85) throw new Error('Narration exceeds the 85-second production budget. Shorten the script.');
+      if (durationSeconds + NARRATION_LIMITS.paddingSeconds > NARRATION_LIMITS.productionSeconds) throw new Error('Narration exceeds the 50-second production budget. Shorten the script.');
     }
-    if (durationSeconds + 8 > 85) throw new Error('Cached narration exceeds the 85-second production budget.');
+    if (durationSeconds + NARRATION_LIMITS.paddingSeconds > NARRATION_LIMITS.productionSeconds) throw new Error('Cached narration exceeds the 50-second production budget.');
     return { model: NARRATION_MODEL, voice: NARRATION_VOICE, scriptHash, durationSeconds, estimatedUSD: rounded(estimatedUSD), reservedUSD: rounded(reservedUSD), clips };
     } finally { await generationLock.close(); await unlink(generationLockPath); }
   }

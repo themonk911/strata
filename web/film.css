@@ -5,6 +5,7 @@
 
 .narrated-video{border:1px solid #d5ddcd;border-radius:12px;padding:22px;background:#fafaf4;margin:0 0 22px}
 .narrated-video-top{display:flex;align-items:center;justify-content:space-between;gap:20px}
+.narrated-video-top-actions{display:flex;flex-direction:column;align-items:stretch;gap:8px;flex-shrink:0}
 .narrated-video-top h3{font:26px Georgia,serif;margin:8px 0 0;letter-spacing:-.4px}
 .narrated-video-top .primary{flex-shrink:0;font-size:12px;min-height:44px;padding:13px 18px}
 .film-dialog .narrated-video-price{font-size:12px;line-height:1.5;color:#4f6651;margin:15px 0 7px;max-width:none}

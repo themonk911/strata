@@ -13,7 +13,7 @@ const el = (tag, cls, text) => { const node = document.createElement(tag); node.
 export function openFilm(data, { api, pollJob, local, busy }) {
   const dialog = el('dialog', 'film-dialog');
   const heading = el('div', 'film-heading');
-  const headingText = el('div'); headingText.append(el('span', 'eyebrow', 'STRATA / MOTION ATLAS'), el('h2', '', 'Your codebase, in a minute.'));
+  const headingText = el('div'); headingText.append(el('span', 'eyebrow', 'STRATA / MOTION ATLAS'), el('h2', '', 'Your codebase on film.'));
   const close = el('button', 'film-close', '×'); close.ariaLabel = 'Close codebase film'; heading.append(headingText, close);
   const stage = el('div', 'film-stage'), canvas = el('canvas'); canvas.width = 1280; canvas.height = 720; canvas.ariaLabel = 'Animated infographic of codebase history'; stage.append(canvas);
   const host = el('div', 'film-render-host'); host.ariaHidden = 'true'; document.body.append(host);

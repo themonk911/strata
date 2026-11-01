@@ -38,6 +38,18 @@ test('video input binds all four PNGs to exact dataset and revision', () => {
   assert.throws(() => validateVideoInput(d, { ...input(d), portraitId: '../../key' }), /illustration/);
   assert.throws(() => validateVideoInput(d, { ...input(d), retryNarration: 'yes' }), /explicitly/);
   assert.equal(validateVideoInput(d, { ...input(d), retryNarration: true }).retryNarration, true);
+  assert.throws(() => validateVideoInput(d, { ...input(d), includeHistory: 'yes' }), /explicitly/);
+  assert.equal(validateVideoInput(d, input(d)).includeHistory, false);
+});
+test('UI history annotations do not change scan identity, but real scan edits do', () => {
+  const original = data(), annotated = { ...original, historyDecisions: { status: 'ready', entries: [{ label: 'repair' }] } };
+  assert.equal(datasetHash(annotated), datasetHash(original));
+  assert.equal(validateVideoInput(annotated, input(original)).includeHistory, false);
+  assert.equal(validateVideoInput(original, input(annotated)).includeHistory, false);
+  assert.equal(annotated.historyDecisions.entries[0].label, 'repair');
+  const changed = structuredClone(annotated); changed.snapshots[0].files['new.py'] = { lines: 4 };
+  assert.notEqual(datasetHash(changed), datasetHash(original));
+  assert.equal(Object.hasOwn(original, 'historyDecisions'), false);
 });
 test('PNG validation rejects corrupt chunks and disguised input', () => {
   const valid = png(); assert.equal(validatePNG(valid), valid); const corrupt = Buffer.from(valid); corrupt[45] ^= 1;
@@ -74,6 +86,23 @@ test('server restart marks unfinished jobs interrupted without generation', asyn
   await writeFile(join(directory, 'job.json'), JSON.stringify({ id, kind: 'video', status: 'running' }));
   const service = new VideoService(serviceOptions(root, { writeStory: () => { throw new Error('must not run'); } }));
   assert.equal((await service.get(id)).status, 'error'); assert.match((await service.get(id)).error, /not retried/); await service.close();
+});
+test('latest failed or running jobs keep the most recent saved video available for the same scan', async t => {
+  const root = await temporary(t), d = data(), other = data(); other.meta.name = 'Another repository';
+  const oldest = { id: randomUUID(), kind: 'video', status: 'done', datasetHash: datasetHash(d), startedAt: 1, completedAt: 2 };
+  const saved = { id: randomUUID(), kind: 'video', status: 'done', datasetHash: datasetHash(d), startedAt: 3, completedAt: 4, video: '/saved-video.mp4' };
+  const failed = { id: randomUUID(), kind: 'video', status: 'error', datasetHash: datasetHash(d), startedAt: 5 };
+  const unrelated = { id: randomUUID(), kind: 'video', status: 'done', datasetHash: datasetHash(other), startedAt: 6, completedAt: 7 };
+  for (const job of [oldest, saved, failed, unrelated]) { const directory = join(root, '.local/videos', job.id); await mkdir(directory, { recursive: true }); await writeFile(join(directory, 'job.json'), JSON.stringify(job)); }
+  const service = new VideoService(serviceOptions(root, { writeStory: async () => new Promise(() => {}) }));
+  const initial = await service.status({ ...d, historyDecisions: { status: 'ready' } });
+  assert.equal(initial.latest.id, failed.id); assert.equal(initial.savedVideo.id, saved.id); assert.equal(initial.savedVideo.video, '/saved-video.mp4');
+  const running = await service.start(d, input(d)), status = await service.status(d);
+  assert.equal(status.latest.id, running.id); assert.equal(status.latest.status, 'running'); assert.equal(status.savedVideo.id, saved.id);
+  const unknown = data(); unknown.meta.name = 'No matching scan';
+  assert.equal((await service.status(unknown)).savedVideo, null); assert.equal((await service.status(other)).savedVideo.id, unrelated.id);
+  await service.close(); const restored = new VideoService(serviceOptions(root));
+  assert.equal((await restored.status(d)).latest.status, 'error'); assert.equal((await restored.status(d)).savedVideo.id, saved.id); await restored.close();
 });
 test('missing dependencies are reported before a job or paid request starts', async t => {
   const root = await temporary(t), service = new VideoService(serviceOptions(root, { readiness: async () => ({ tool: false, chrome: false, ffmpeg: true, key: false }) }));
@@ -113,7 +142,7 @@ test('global and per-video budgets reject requests without contacting the provid
   }
 });
 test('script limits reject excess words, scenes, and path-like IDs', () => {
-  assert.throws(() => validateScenes([{ id: 'origin', text: 'word '.repeat(181) }]), /180/);
+  assert.throws(() => validateScenes([{ id: 'origin', text: 'word '.repeat(106) }]), /105/);
   assert.throws(() => validateScenes([{ id: '../secret', text: 'Text' }]), /invalid/);
   assert.throws(() => validateScenes(Array.from({ length: 8 }, (_, i) => ({ id: 's' + i, text: 'Text' }))), /seven/);
 });
@@ -219,4 +248,43 @@ test('a completed legacy cache reuses exact validated audio without new spending
   await writeFile(join(cache, legacy.hash + '.json'), JSON.stringify(legacy)); await writeFile(join(cache, legacy.hash + '.wav'), await readFile(join(cache, current.hash + '.wav')));
   await rm(join(cache, current.hash + '.json')); await rm(join(cache, current.hash + '.wav')); ledger.calls[0] = legacy; await writeFile(ledgerPath, JSON.stringify(ledger));
   const result = await generate(); assert.equal(counter.calls, 1); assert.equal(result.clips[0].cached, true); assert.equal(result.reservedUSD, 0);
+});
+test('requested history is dataset-matched before story and template, with only counts persisted', async t => {
+  const root = await temporary(t), d = data(), events = [];
+  const history = { status: 'ready', datasetHash: datasetHash(d), model: 'gpt-6-luna', skipped: 2, cached: true, entries: [
+    { type: 'choice', status: 'classified', label: 'repair', confidence: .8, patch: 'PRIVATE PATCH MUST NOT BE PERSISTED ON JOB' },
+    { type: 'refusal', status: 'refused', refusal: 'Not enough evidence.', patch: 'private patch' },
+  ] };
+  const service = new VideoService(serviceOptions(root, { getHistory: async (value, activity) => { assert.equal(datasetHash(value), history.datasetHash); assert.equal(typeof activity, 'function'); events.push('history'); return history; },
+    writeStory: async (_data, _activity, passed) => { assert.equal(passed, history); events.push('story'); return story(); },
+    createProject: async options => { assert.equal(options.history, history); events.push('template'); return template(options); } }));
+  const job = await service.start(d, { ...input(d), includeHistory: true }), done = await waitDone(service, job.id);
+  assert.equal(done.status, 'done'); assert.deepEqual(events, ['history', 'story', 'template']); assert.equal(done.history.model, 'gpt-6-luna'); assert.equal(done.history.reviewed, 2); assert.equal(done.history.counts.repair, 1); assert.equal(done.history.counts.refused, 1); assert.equal(done.history.skipped, 2);
+  assert.equal(JSON.stringify(done).includes('private patch'), false); assert.equal(JSON.stringify(done).includes('PRIVATE PATCH'), false); await service.close();
+});
+test('requested history failure or wrong dataset stops before storyboard and narration', async t => {
+  for (const wrongDataset of [false, true]) {
+    const root = await temporary(t); let storyCalls = 0, paidCalls = 0;
+    const service = new VideoService(serviceOptions(root, { getHistory: async () => { if (!wrongDataset) throw new Error('Decisions unavailable.'); return { status: 'ready', datasetHash: 'wrong', model: 'gpt-6-luna', entries: [], skipped: 0 }; },
+      writeStory: async () => { storyCalls++; return story(); }, narration: { generate: async () => { paidCalls++; } } }));
+    const d = data(), job = await service.start(d, { ...input(d), includeHistory: true }), done = await waitDone(service, job.id);
+    assert.equal(done.status, 'error'); assert.match(done.error, /Requested Decisions history/); assert.equal(storyCalls, 0); assert.equal(paidCalls, 0); await service.close();
+  }
+});
+test('history runs only when explicitly included and remains optional for older service callers', async t => {
+  const root = await temporary(t); let historyCalls = 0;
+  const service = new VideoService(serviceOptions(root, { getHistory: async () => { historyCalls++; throw new Error('Should not run'); } }));
+  const d = data(), job = await service.start(d, input(d)); assert.equal((await waitDone(service, job.id)).status, 'done'); assert.equal(historyCalls, 0); await service.close();
+  const other = new VideoService(serviceOptions(root));
+  const included = await other.start(d, { ...input(d), includeHistory: true }); assert.equal((await waitDone(other, included.id)).status, 'done'); await other.close();
+});
+test('production accepts a disclosed forty-second overrun but stops above fifty seconds', async t => {
+  for (const duration of [44, 51]) {
+    const root = await temporary(t), defaults = serviceOptions(root), commands = [];
+    const service = new VideoService({ ...defaults, runner: async (c, args, opts) => { commands.push(args[1]); const output = await defaults.runner(c, args, opts), result = JSON.parse(output.stdout); result.duration = duration; return { ...output, stdout: JSON.stringify(result) }; } });
+    const d = data(), job = await service.start(d, input(d)), done = await waitDone(service, job.id);
+    if (duration === 44) { assert.equal(done.status, 'done'); assert.match(done.warnings[0], /44.0 seconds.*40 seconds/); }
+    else { assert.equal(done.status, 'error'); assert.match(done.error, /50 seconds/); assert.deepEqual(commands, ['voice']); }
+    await service.close();
+  }
 });
