@@ -2,7 +2,7 @@
 
 **See what your agents leave behind.** Strata turns a local git repository into a 3D city you can scrub through time, then gives Codex the same module-boundary facts.
 
-One journey: find a violet shortcut, inspect the public gate, ask Codex to investigate, make a focused repair, and rescan to see the arc disappear.
+Explore how a codebase grew, follow the paths across its boundaries, and turn its history into a forty-second infographic film. Codex can investigate a boundary when you want to go deeper.
 
 ## Run locally
 
@@ -65,6 +65,8 @@ node bin/strata.mjs scan --repo /path/to/repo --working --out .local/city.json
 
 ## Codex and Decisions
 
+- **Create codebase film:** preview five animated chapters with real history, camera moves, counts, and charts. “Write with Astra” uses `gpt-6-astra` at `medium` reasoning through the signed-in Codex app-server to write an evidence-backed storyboard. The model chooses validated snapshot references; displayed numbers come from the scan. Storyboards are cached for the same evidence.
+- **Illustrate ending:** generate a city illustration for the final chapter through Codex. Saved illustrations are matched to their source dataset. Export a silent, captioned 40-second video locally using the browser’s MediaRecorder; supported browsers choose WebM or MP4. Keep the tab visible during recording. This is a rendered infographic film, not an image-to-video model call.
 - **Investigate:** a local `codex app-server` uses your existing ChatGPT sign-in with a read-only sandbox and approvals disabled. Its instructions focus investigation on the named gate and source files.
 - **Illustrate:** the app sends a screenshot of the real city to Codex’s built-in image generation. The output is an artistic interpretation, kept separate from measured facts, using included-plan usage.
 - **Judge the gate:** optional Decisions API call with `gpt-6-luna`, using bounded import facts rather than repository source. Add `OPENAI_API_KEY=...` to `.env.local`. Never put the key in browser code. Repeated evidence is cached; the server caps requests at 50 per process and 40,000 request characters. This is a conservative request cap, not an account-wide dollar budget.
@@ -93,6 +95,7 @@ Strata dogfoods declared gates for its own `core`, `server`, and `web` modules. 
 - Violet arcs are imports into another module’s private files. Selected districts show individual arcs; other arcs are bundled.
 - Rings mark private files reached from at least two other districts.
 - Warmth means change since the preceding sampled snapshot. Activity dots trace actual commits, not asserted agent identities.
+- The film’s **boundary pressure** is shortcuts divided by all resolved imports, including imports inside a district. It normalizes the shortcut count for import growth; it is not a validated entropy or defect score.
 
 ## Limitations
 
@@ -106,7 +109,7 @@ The Codex sandbox restricts writes, not filesystem reads. Instructions to avoid 
 
 The core scanner needs no account or hosted service. Output includes source paths, import relationships, counts, and commit times, but excludes file contents, commit messages, author names, and emails. That structure can still be private. Keep private scans under ignored `.local/` or `.strata/`.
 
-Codex investigation sends selected code to the signed-in Codex service; Decisions sends selected boundary facts to OpenAI; illustrations send the displayed city screenshot to Codex. These are explicit button actions. Generated assets and cached responses stay in `.local/` and are not served as a directory listing.
+Codex investigation sends selected code to the signed-in Codex service; Decisions sends selected boundary facts to OpenAI; illustrations send the displayed city screenshot to Codex; Astra receives aggregate history and top district names for the film narrative. These are explicit button actions. Generated assets and cached responses stay in `.local/` and are not served as a directory listing. Downloaded videos contain visible codebase structure and need the same privacy review as screenshots.
 
 To export an approved public dataset as a static page:
 

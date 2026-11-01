@@ -7,6 +7,7 @@
 - D3 force and polygon packages provide layout and geometry helpers (ISC).
 - TypeScript 5.9.3 provides the JS/TS parser (Apache-2.0). It is pinned because the 7.x compiler API changed.
 - esbuild bundles the browser and standalone plugin parser (MIT).
+- fix-webm-duration supplies missing duration metadata for browser-recorded films (MIT).
 - No UI template, external font, stock image, or prebuilt 3D model is used. City geometry is generated from analysis data.
 - Optional city portraits are AI-generated through Codex from the current rendered city, and are labeled as illustrations rather than measured geometry. Private portraits are not bundled with source.
 

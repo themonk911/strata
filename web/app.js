@@ -1,4 +1,5 @@
 import { City } from './city.js';
+import { openFilm } from './film.js';
 
 const $ = id => document.getElementById(id);
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -124,7 +125,7 @@ async function judge() {
   finally { $('judge').disabled = false; }
 }
 function showAbout() {
-  modal(`<div class="eyebrow modal-eyebrow">A FIELD GUIDE TO STRATA</div><h2>Your codebase has a landscape.</h2><p>Strata turns git history into a city you can explore, and gives coding agents the same boundary facts. Find a repeated shortcut, investigate the gate, make a focused repair, and rescan.</p><div class="about-grid"><div><h3>Buildings & districts</h3><p>A building is a source file. Its height grows with the square root of its line count. Deleted files leave an empty plot. Lots stay in the same place across history.</p></div><div><h3>Walls & violet arcs</h3><p>A gate is a module’s public entry point. An arc is a detected import into another module’s private file. Bundles separate into individual imports when you select a district.</p></div><div><h3>Heat & desire paths</h3><p>Warm buildings changed since the previous sampled snapshot. Rings mark private files imported by at least two other districts. Activity dots represent commits, not identified agents.</p></div><div><h3>Evidence & judgment</h3><p>Python imports use AST parsing; JS/TS static string imports use a limited extractor. Boundaries may be inferred. Decisions gives an advisory recommendation, and Codex explains what to investigate.</p></div></div><p class="code" style="font-size:10px">No composite entropy score is claimed. Gate definitions are applied consistently across history. ${escape(data.meta.coverage)}</p>`);
+  modal(`<div class="eyebrow modal-eyebrow">A FIELD GUIDE TO STRATA</div><h2>Your codebase has a landscape.</h2><p>Strata turns git history into a city you can explore, and gives coding agents the same boundary facts. Find a repeated shortcut, investigate the gate, make a focused repair, and rescan.</p><div class="about-grid"><div><h3>Buildings & districts</h3><p>A building is a source file. Its height grows with the square root of its line count. Deleted files leave an empty plot. Lots stay in the same place across history.</p></div><div><h3>Walls & violet arcs</h3><p>A gate is a module’s public entry point. An arc is a detected import into another module’s private file. Bundles separate into individual imports when you select a district.</p></div><div><h3>Heat & desire paths</h3><p>Warm buildings changed since the previous sampled snapshot. Rings mark private files imported by at least two other districts. Activity dots represent commits, not identified agents.</p></div><div><h3>Evidence & judgment</h3><p>Python and JS/TS imports use AST parsing; computed runtime imports remain outside coverage. Boundaries may be inferred. Decisions gives an advisory recommendation, and Codex explains what to investigate.</p></div></div><p class="code" style="font-size:10px">No composite entropy score is claimed. Gate definitions are applied consistently across history. ${escape(data.meta.coverage)}</p>`);
 }
 async function init() {
   try {
@@ -151,6 +152,7 @@ async function init() {
     $('modal').addEventListener('click', e => { if (e.target === $('modal')) $('modal').close(); });
     $('copy-task').onclick = async () => { try { await navigator.clipboard.writeText(repairTask()); toast('Repair task copied. Paste it into Codex.'); } catch { modal('<h2>Repair task</h2><pre style="white-space:pre-wrap">' + escape(repairTask()) + '</pre>'); } };
     $('postcard').onclick = illustrate; $('explain').onclick = explain; $('judge').onclick = judge;
+    $('film').onclick = () => { play(false); openFilm(data, { api, pollJob, local: Boolean(status.local), busy: () => Boolean(activeJob) }); };
     $('rescan').onclick = async () => {
       if (activeJob) return toast('Let the current request finish first.');
       $('rescan').disabled = true;

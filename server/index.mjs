@@ -1,12 +1,13 @@
 import http from 'node:http';
-import { readFile, writeFile, mkdir, copyFile, stat } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, copyFile, stat, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { CodexClient } from './codex.mjs';
 import { decide, decisionCacheKey } from './decisions.mjs';
+import { STORY_MODEL, STORY_EFFORT, storyEvidence, storyCacheKey, storySchema, storyPrompt, validateStory } from './story.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const local = join(root, '.local');
@@ -20,6 +21,10 @@ let apiCalls = 0;
 let apiInFlight = false;
 const dataFile = resolve(process.env.STRATA_DATA || join(local, 'city.json'));
 const readCity = async () => JSON.parse(await readFile(dataFile, 'utf8'));
+function datasetIdentity(data) {
+  return { hash: createHash('sha256').update(JSON.stringify(data)).digest('hex'),
+    name: data.meta.name, revision: data.meta.revision, private: data.meta.private !== false };
+}
 async function workspace() {
   const saved = existsSync(join(local, 'workspace.json')) ? JSON.parse(await readFile(join(local, 'workspace.json'), 'utf8')) : {};
   return { repo: process.env.STRATA_REPO || saved.repo, config: process.env.STRATA_CONFIG || saved.config };
@@ -44,11 +49,11 @@ function factsFor(data, input) {
     desirePaths: snapshot.desirePaths.filter(d => snapshot.files[d.target]?.district === district.id).slice(0, 12),
     gatePolicy: data.meta.gatePolicy, caveat: 'Static import facts only; no source semantics or causal evidence. Boundary definitions may be inferred.' };
 }
-async function beginJob(kind, facts, screenshot) {
+async function beginJob(kind, facts, screenshot, dataset) {
   if (activeJob) throw new Error('A Codex request is already running. Let it finish first.');
   activeJob = true;
   const id = randomUUID();
-  const job = { id, kind, status: 'running', activity: 'Connecting to your Codex login…', text: '', startedAt: Date.now() };
+  const job = { id, kind, status: 'running', activity: 'Connecting to your Codex login…', text: '', startedAt: Date.now(), dataset };
   jobs.set(id, job);
   (async () => {
     try {
@@ -92,6 +97,53 @@ async function beginJob(kind, facts, screenshot) {
   })();
   return job;
 }
+async function beginStory(data) {
+  const evidence = storyEvidence(data);
+  const cachePath = join(local, 'generated', storyCacheKey(evidence) + '.story.json');
+  const id = randomUUID();
+  try {
+    const saved = JSON.parse(await readFile(cachePath, 'utf8'));
+    const story = validateStory({ title: saved.title, subtitle: saved.subtitle, chapters: saved.chapters }, data, evidence);
+    const job = { id, kind: 'story', status: 'done', activity: 'Storyboard ready', story, cached: true };
+    jobs.set(id, job); return job;
+  } catch { /* Missing or incomplete cache: generate again. */ }
+  if (activeJob) throw new Error('A Codex request is already running. Let it finish first.');
+  activeJob = true;
+  const job = { id, kind: 'story', status: 'running', activity: 'Astra is reading the shape of your history…', startedAt: Date.now() };
+  jobs.set(id, job);
+  (async () => {
+    try {
+      const result = await codex.run({ cwd: join(local, 'agent-work'), model: STORY_MODEL, effort: STORY_EFFORT,
+        outputSchema: storySchema, prompt: storyPrompt(evidence), timeout: 180000,
+        onEvent: () => { job.activity = 'Astra is composing your codebase film…'; } });
+      job.story = validateStory(result.text, data, evidence);
+      await writeFile(cachePath, JSON.stringify(job.story));
+      job.status = 'done'; job.activity = 'Storyboard ready'; job.durationMs = Date.now() - job.startedAt;
+    } catch (error) { job.status = 'error'; job.error = error.message; }
+    finally { activeJob = false; }
+  })();
+  return job;
+}
+async function portraits(data) {
+  const items = [];
+  const currentDataset = datasetIdentity(data);
+  for (const filename of await readdir(join(local, 'generated'))) {
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.json$/.test(filename)) continue;
+    try {
+      const saved = JSON.parse(await readFile(join(local, 'generated', filename), 'utf8'));
+      const id = filename.slice(0, -5);
+      if (saved.kind !== 'postcard' || saved.status !== 'done' || saved.id !== id) continue;
+      if (saved.dataset?.hash && saved.dataset.hash !== currentDataset.hash) continue;
+      if (!(await stat(join(local, 'generated', id + '.png'))).isFile()) continue;
+      items.push({ id, image: '/generated/' + id + '.png',
+        sourceImage: existsSync(join(local, 'generated', id + '-source.png')) ? '/generated/' + id + '-source.png' : null,
+        label: 'Generated with Codex · artistic interpretation', createdAt: Number(saved.startedAt) || 0,
+        private: saved.dataset?.private !== false, unverifiedDataset: !saved.dataset?.hash,
+        dataset: saved.dataset ? { name: saved.dataset.name, revision: saved.dataset.revision } : null });
+    } catch { /* Incomplete generation artifacts are not gallery entries. */ }
+  }
+  return { portraits: items.sort((a, b) => b.createdAt - a.createdAt).slice(0, 30) };
+}
 const server = http.createServer(async (req, res) => {
   try {
     if (![ '127.0.0.1:' + port, 'localhost:' + port ].includes(req.headers.host)) return json(res, 403, { error: 'Local host only.' });
@@ -99,6 +151,8 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     const path = new URL(req.url, 'http://localhost').pathname;
     if (req.method === 'GET' && path === '/api/city') return json(res, 200, await readCity());
+    if (req.method === 'GET' && path === '/api/portraits') return json(res, 200, await portraits(await readCity()));
+    if (req.method === 'POST' && path === '/api/story') { await body(req); return json(res, 202, await beginStory(await readCity())); }
     if (req.method === 'GET' && path === '/api/status') {
       let status; try { status = await codex.status(); } catch { status = { signedIn: false, imageGeneration: false }; }
       return json(res, 200, { ...status, decisions: Boolean(loadKey()), apiCalls, local: true, rescan: Boolean((await workspace()).repo) });
@@ -124,7 +178,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && ['/api/decision', '/api/explain', '/api/postcard'].includes(path)) {
       const input = await body(req);
-      const facts = factsFor(await readCity(), input);
+      const data = await readCity(), facts = factsFor(data, input);
       if (path === '/api/decision') {
         const cachePath = join(local, 'generated', decisionCacheKey(facts) + '.decision.json');
         if (existsSync(cachePath)) return json(res, 200, { ...JSON.parse(await readFile(cachePath, 'utf8')), cached: true });
@@ -133,13 +187,13 @@ const server = http.createServer(async (req, res) => {
         try { apiCalls++; const result = await decide(facts, loadKey()); await writeFile(cachePath, JSON.stringify(result)); return json(res, 200, result); }
         finally { apiInFlight = false; }
       }
-      return json(res, 202, await beginJob(path === '/api/postcard' ? 'postcard' : 'explain', facts, input.screenshot));
+      return json(res, 202, await beginJob(path === '/api/postcard' ? 'postcard' : 'explain', facts, input.screenshot, datasetIdentity(data)));
     }
     if (req.method !== 'GET') return json(res, 405, { error: 'Method not allowed.' });
     let file;
-    if (/^\/generated\/[a-f0-9-]+\.png$/.test(path)) file = join(local, path.slice(1));
+    if (/^\/generated\/[a-f0-9-]+(?:-source)?\.png$/.test(path)) file = join(local, path.slice(1));
     else if (path === '/') file = join(root, 'dist/index.html');
-    else if (['/app.js', '/app.js.LEGAL.txt', '/style.css'].includes(path)) file = join(root, 'dist', path.slice(1));
+    else if (['/app.js', '/app.css', '/app.js.LEGAL.txt', '/style.css'].includes(path)) file = join(root, 'dist', path.slice(1));
     else return json(res, 404, { error: 'Not found.' });
     const bytes = await readFile(file);
     const type = file.endsWith('.png') ? 'image/png' : file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : file.endsWith('.html') ? 'text/html' : 'text/plain';
