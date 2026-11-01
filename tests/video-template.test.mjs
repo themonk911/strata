@@ -92,6 +92,67 @@ test('inferred gates remain qualified in narration and visual data', async t => 
   assert.match(result.scenes[5].text, /Confirm the intended entry point/);
 });
 
+for (const inferred of [false, true]) test(`reviewed plans retain narration and ${inferred ? 'inferred' : 'declared'} gate provenance`, async t => {
+  const input = { ...await sandbox(t), ...fixture({ inferred }) };
+  input.data.meta.revision = 'b'.repeat(40);
+  const captions = {
+    origin: 'This scan contains 2 files.',
+    boundaries: 'The ledger has 1 public entry point.',
+    growth: 'The source grew from 20 to 40 lines.',
+    pressure: 'The scan now detects 1 shortcut.',
+    findings: 'That shortcut enters the ledger module.',
+    focus: 'Review the caller before changing the ledger.',
+    outlook: 'Reroute the import and run the affected tests.'
+  };
+  const plan = {
+    datasetHash: createHash('sha256').update(JSON.stringify(input.data)).digest('hex'),
+    revision: input.data.meta.revision,
+    story: { title: 'Reviewed ledger history', subtitle: 'A manually checked boundary review.',
+      chapters: ids.map((id, index) => ({ id, title: `Reviewed ${id}`, caption: captions[id],
+        snapshot: index < 2 ? 0 : 1, district: id === 'focus' ? 'ledger' : null })) },
+    reviewedBoundaryStory: {
+      baseline: { date: input.data.snapshots[0].date, snapshot: 0, shortcuts: 0 },
+      focus: { title: 'Ledger callers', district: 'ledger', entryPoint: 'ledger/index.js',
+        callers: ['caller/index.js'], targets: ['ledger/private.js'], caption: 'Review this import route.' },
+      repair: { district: 'ledger', title: 'Proposed route', count: 1, total: 1,
+        before: 'ledger/private.js', after: 'ledger/index.js', caption: 'Run the affected tests after rerouting.' }
+    }
+  };
+  const history = { status: 'ready', model: 'gpt-6-luna', datasetHash: plan.datasetHash, skipped: 0, entries: [] };
+  const result = await createVideoProject({ ...input, history,
+    story: { ...plan.story, model: 'Reviewed script', reviewedVideoPlan: plan } });
+  const value = await report(result), script = await readFile(result.scriptPath, 'utf8');
+  assert.deepEqual(result.scenes, playback.map(id => ({ id, text: captions[id] })));
+  for (const id of ['origin', 'boundaries']) {
+    assert.equal(value.chapters[id].title, `Reviewed ${id}`);
+    assert.equal(value.chapters[id].caption, captions[id]);
+  }
+  assert.equal(value.focus.inferred, inferred);
+  assert.ok(!script.includes('Confirm the intended entry point'));
+  assert.deepEqual(value.reviewedBoundaryStory, plan.reviewedBoundaryStory);
+  assert.equal(value.decisions, null);
+  for (const id of ids) {
+    const line = script.match(new RegExp(`^## ${id}[^\\n]*\\n([^\\n]+)`, 'm'))?.[1];
+    assert.ok(line, `Script contains the ${id} scene`);
+    for (const marker of ['start', 'detail', 'finish']) assert.equal(line.split(`[#${marker}]`).length - 1, 1);
+    assert.equal(line.replace(/\[#(?:start|detail|finish)\] /g, ''), captions[id]);
+  }
+  const { default: scenes } = await import(pathToFileURL(join(result.projectPath, 'scenes.js')).href);
+  const displayed = [];
+  const stage = { ctx: { measureText: () => ({ width: 0 }) }, text: value => displayed.push(value),
+    camera() {}, line() {}, box() {}, arrow() {}, draw() {} };
+  scenes.focus(stage);
+  assert.ok(displayed.includes(inferred ? 'Inferred gate · confirm intent' : 'Declared public gate'));
+  assert.ok(!displayed.includes(inferred ? 'Declared public gate' : 'Inferred gate · confirm intent'));
+  displayed.length = 0;
+  scenes.boundaries(stage);
+  assert.ok(displayed.some(value => value.startsWith('Illustrative diagram')));
+  displayed.length = 0;
+  scenes.pressure(stage);
+  assert.ok(displayed.some(value => value.startsWith('Detected by Strata')));
+  assert.ok(!displayed.some(value => value.includes('Inferred')));
+});
+
 test('repository text is serialized as inert data and portraits are credited as generated', async t => {
   const name = "'); globalThis.strataTemplateInjected = true; // </script>";
   const input = { ...await sandbox(t), ...fixture({ name }) };

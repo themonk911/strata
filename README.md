@@ -106,6 +106,8 @@ Open **Film → Generate narrated video**. Strata captures views of the loaded c
 
 The app shows progress and saves jobs so a finished film can be reopened with **Film → Play saved video**, including after a server restart. Playback uses the saved MP4 without generating anything or spending API credits. Videos, scripts, captions, and audio stay under ignored `.local/videos/`. Private repositories produce private local films; generation does not publish anything or change the static export privacy rule. The script is sent to OpenAI for narration. Codex receives aggregate evidence to write it. When classified history is enabled, Decisions receives sampled commit subjects and bounded code diffs; only the resulting classification counts go into the video script evidence.
 
+A locally reviewed script can replace generated narration for an exact scan. Store its plan under ignored `.local/video-scripts/<datasetHash>.json`; Strata validates the scan identity, chapter references, measured baseline and count bounds before recording. This mode supports spoken numbers, a boundary diagram, shortcut history and a proposed import change. It uses the reviewed script instead of requesting Astra narration or Decisions classifications, even when classified history is selected. Source-level claims in the script require manual review; count validation alone does not establish that a repair is correct. The normal generated-story checks remain in place for other scans.
+
 Audio is metered API usage, separate from the Codex plan. The app reserves at most $1 per script and $5 cumulatively in its local video ledger, caches matching recordings, and does not automatically retry a failed paid request. If narration adds or omits words, **Retry narration** permits one stronger attempt for that passage and reuses completed clips. Retry jobs share the original script's spending limit. These are local request bounds, not an account-wide spending limit. The silent 56-second browser export remains available without the narration API or renderer setup.
 
 - **Film:** preview seven animated chapters with real history, camera moves, counts, and charts. “Write with Astra” uses `gpt-6-astra` at `medium` reasoning through the signed-in Codex app-server to write an evidence-backed storyboard. The model chooses validated snapshot references; displayed numbers come from the scan. Storyboards are cached for the same evidence, and the script is editable before export.
@@ -188,7 +190,7 @@ Host `dist/` on a static web host. Static sharing supports exploring history and
 
 ## Development and credits
 
-Built at the DevDay Exchange Community Hackathon, London, 1 November 2026. [Credits and prior work](CREDITS.md). [90-second demo outline](docs/demo.md).
+Built at the DevDay Exchange Community Hackathon, London, 1 November 2026. [Credits and prior work](CREDITS.md).
 
 ```sh
 npm test

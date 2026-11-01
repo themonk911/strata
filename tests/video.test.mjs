@@ -262,6 +262,53 @@ test('requested history is dataset-matched before story and template, with only 
   assert.equal(done.status, 'done'); assert.deepEqual(events, ['history', 'story', 'template']); assert.equal(done.history.model, 'gpt-6-luna'); assert.equal(done.history.reviewed, 2); assert.equal(done.history.counts.repair, 1); assert.equal(done.history.counts.refused, 1); assert.equal(done.history.skipped, 2);
   assert.equal(JSON.stringify(done).includes('private patch'), false); assert.equal(JSON.stringify(done).includes('PRIVATE PATCH'), false); await service.close();
 });
+test('reviewed scripts bypass unused history and story generation, and invalid plans stop before spending', async t => {
+  for (const invalid of [false, true]) {
+    const root = await temporary(t), d = data(), defaults = serviceOptions(root);
+    const ids = ['origin', 'boundaries', 'growth', 'pressure', 'findings', 'focus', 'outlook'];
+    Object.assign(d.snapshots[0], { date: '2026-10-01',
+      files: { 'caller.js': { district: 'caller', lines: 1 }, 'ledger/private.js': { district: 'ledger', lines: 2 } },
+      districts: [{ id: 'ledger', name: 'ledger', incoming: 1, walled: true, inferred: false }],
+      shortcuts: [{ source: 'caller.js', target: 'ledger/private.js' }], desirePaths: [] });
+    const plan = { datasetHash: datasetHash(d), revision: d.meta.revision,
+      story: { title: 'Reviewed ledger', subtitle: 'A reviewed import route.', chapters: ids.map(id => ({ id, title: id,
+        caption: 'Review this import route.', snapshot: 0, district: id === 'focus' ? 'ledger' : null })) },
+      reviewedBoundaryStory: {
+        baseline: { date: d.snapshots[0].date, snapshot: 0, shortcuts: invalid ? 99 : 1 },
+        focus: { title: 'Ledger imports', entryPoint: 'ledger/index.js', callers: ['caller.js'], targets: ['ledger/private.js'], caption: 'Review the route.' },
+        repair: { district: 'ledger', title: 'Proposed import', count: 1, total: 1, before: 'ledger/private.js', after: 'ledger/index.js', caption: 'Run affected tests.' }
+      } };
+    await mkdir(join(root, '.local/video-scripts'), { recursive: true });
+    await writeFile(join(root, '.local/video-scripts', plan.datasetHash + '.json'), JSON.stringify(plan));
+    let historyCalls = 0, storyCalls = 0, narrationCalls = 0;
+    const { createProject: _template, ...options } = defaults;
+    const service = new VideoService({ ...options,
+      getHistory: async () => { historyCalls++; throw new Error('Unused history must not be purchased.'); },
+      writeStory: async () => { storyCalls++; throw new Error('A reviewed script is already available.'); },
+      narration: { generate: async ({ scenes }) => { narrationCalls++; assert.equal(scenes.length, 7); return { estimatedUSD: 0, durationSeconds: 12 }; } },
+      runner: async (command, args, opts) => {
+        const report = JSON.parse((await defaults.runner(command, args, opts)).stdout);
+        if (args[1] === 'voice') report.scenes = ids.map(id => ({ scene: id, confirmed: 1, unconfirmed: [] }));
+        if (args[1] === 'verify') report.speech.scenes = ids.map(id => ({ id, matchRate: 1 }));
+        if (args[1] === 'render') {
+          await mkdir(join(args[2], 'out'), { recursive: true });
+          for (const name of ['video.mp4', 'video.srt', 'video.cover.jpg']) await writeFile(join(args[2], 'out', name), 'fixture');
+        }
+        return { stdout: JSON.stringify(report) };
+      }
+    });
+    t.after(() => service.close());
+    const job = await service.start(d, { ...input(d), includeHistory: true }), done = await waitDone(service, job.id);
+    assert.equal(historyCalls, 0); assert.equal(storyCalls, 0); assert.equal(done.history, undefined);
+    assert.equal(narrationCalls, invalid ? 0 : 1); assert.equal(done.status, invalid ? 'error' : 'done');
+    if (invalid) assert.match(done.error, /baseline/);
+    else {
+      assert.equal(done.storyModel, 'Reviewed script');
+      const report = JSON.parse(await readFile(join(root, '.local/videos', job.id, 'report.json'), 'utf8'));
+      assert.equal(report.decisions, null); assert.equal(report.reviewedBoundaryStory.repair.total, 1);
+    }
+  }
+});
 test('requested history failure or wrong dataset stops before storyboard and narration', async t => {
   for (const wrongDataset of [false, true]) {
     const root = await temporary(t); let storyCalls = 0, paidCalls = 0;

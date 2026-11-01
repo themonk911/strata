@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { validateStory } from './story.mjs';
+import { validateReviewedVideoStory } from './reviewed-video.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const IDS = ['origin', 'growth', 'boundaries', 'pressure', 'findings', 'focus', 'outlook'];
@@ -22,10 +23,10 @@ function narration(value) {
   return text;
 }
 function spoken(value) { return value.replace(/\bAPI\b/g, 'A, P, I'); }
-function marked(value, id) {
+function marked(value, id, reviewed = false) {
   const words = value.split(/\s+/);
-  const middle = id === 'boundaries' ? words.indexOf('public') : Math.floor(words.length * .4);
-  const end = id === 'boundaries' ? words.indexOf('Violet') : Math.floor(words.length * .75);
+  const middle = id === 'boundaries' && !reviewed ? words.indexOf('public') : Math.floor(words.length * .4);
+  const end = id === 'boundaries' && !reviewed ? words.indexOf('Violet') : Math.floor(words.length * .75);
   return words.map((word, i) => `${i === 0 ? '[#start] ' : ''}${i === middle ? '[#detail] ' : ''}${i === end ? '[#finish] ' : ''}${word.replace(/\bAPI\b/g, '{API|A, P, I}')}`).join(' ');
 }
 function historySummary(history, data) {
@@ -50,15 +51,16 @@ function historySummary(history, data) {
 /** Build an isolated, data-driven Explainroo project. Caller validates image paths. */
 export async function createVideoProject({ directory, data, story, assets, portrait, history }) {
   if (!directory || !data?.snapshots?.length) throw new Error('A project directory and scanned history are required.');
-  const validated = validateStory({ title: story?.title, subtitle: story?.subtitle, chapters: story?.chapters }, data);
+  const reviewed = story?.reviewedVideoPlan ? validateReviewedVideoStory(story.reviewedVideoPlan, data) : null;
+  const validated = reviewed || validateStory({ title: story?.title, subtitle: story?.subtitle, chapters: story?.chapters }, data);
   for (const id of ['origin', 'growth', 'focus', 'outlook']) if (!assets?.[id]) throw new Error(`Missing ${id} city capture.`);
   const points = data.snapshots.map(snapshot => ({ date: clean(snapshot.date), ...count(snapshot), entropy: entropy(snapshot.entropy) }));
   const chapters = Object.fromEntries(validated.chapters.map(chapter => [chapter.id, { title: clean(chapter.title), caption: clean(chapter.caption), snapshot: chapter.snapshot }]));
   // Captures are fixed to the beginning and current state, independently of the
   // model's narrative selection. Keep every displayed figure on those endpoints.
   for (const id of ['origin', 'growth', 'pressure', 'findings', 'focus', 'outlook']) chapters[id].snapshot = points.length - 1;
-  chapters.origin.title = `${clean(data.meta.name)} today`;
-  const decisions = historySummary(history, data);
+  if (!reviewed) chapters.origin.title = `${clean(data.meta.name)} today`;
+  const decisions = reviewed ? null : historySummary(history, data);
   const findingSnapshot = data.snapshots[chapters.findings.snapshot];
   const ranked = [...findingSnapshot.districts].filter(d => d.walled && d.incoming > 0).sort((a, b) => b.incoming - a.incoming || a.id.localeCompare(b.id)).slice(0, 3)
     .map(d => ({ id: clean(d.id), name: clean(d.name), incoming: d.incoming, inferred: Boolean(d.inferred) }));
@@ -72,11 +74,11 @@ export async function createVideoProject({ directory, data, story, assets, portr
     walled: Boolean(district.walled), target: target ? clean(target) : null,
     importers: new Set(targetImports.map(edge => edge.source)).size,
     callingDistricts: new Set(targetImports.map(edge => focusSnapshot.files[edge.source]?.district).filter(Boolean)).size } : null;
-  const captions = { ...Object.fromEntries(validated.chapters.map(chapter => [chapter.id, chapter.caption])),
-    origin: `Here's ${clean(data.meta.name)} today.`,
-    boundaries: 'Modules have public entry points. Violet imports bypass them.' };
+  const captions = Object.fromEntries(validated.chapters.map(chapter => [chapter.id, chapter.caption]));
+  if (!reviewed) Object.assign(captions, { origin: `Here's ${clean(data.meta.name)} today.`,
+    boundaries: 'Modules have public entry points. Violet imports bypass them.' });
   if (!ranked.length) captions.findings = 'No private-import shortcuts are detected here. Static scan coverage still applies.';
-  if (focus?.inferred && !/inferred|intended/i.test(captions.focus)) captions.focus += ' Confirm the intended entry point.';
+  if (!reviewed && focus?.inferred && !/inferred|intended/i.test(captions.focus)) captions.focus += ' Confirm the intended entry point.';
   if (!focus) captions.focus = 'Define the intended public entry points before choosing a module to review.';
   const scenes = IDS.map(id => ({ id, text: spoken(narration(captions[id])) }));
   const wordCount = scenes.reduce((sum, scene) => sum + scene.text.split(/\s+/).length, 0);
@@ -86,7 +88,8 @@ export async function createVideoProject({ directory, data, story, assets, portr
   for (const id of ['origin', 'growth', 'focus', 'outlook']) await copyFile(assets[id], join(assetDirectory, `${id}.png`));
   if (portrait) await copyFile(portrait, join(assetDirectory, 'portrait.png'));
   const report = { version: 1, name: clean(data.meta.name), private: data.meta.private !== false, privacyLabel: data.meta.private === false ? 'Public repository' : 'Private workspace',
-    title: clean(validated.title), model: clean(story.model || 'Astra'), chapters, history: points, decisions, ranked, focus, portrait: Boolean(portrait), wordCount };
+    title: clean(validated.title), model: clean(story.model || 'Astra'), chapters, history: points, decisions, ranked, focus, portrait: Boolean(portrait), wordCount,
+    ...(reviewed ? { reviewedBoundaryStory: reviewed.reviewedBoundaryStory } : {}) };
   const serialized = JSON.stringify(report);
   // Explainroo serves JS modules but deliberately refuses project JSON files.
   // Parse a JSON string literal; repository text never becomes executable code.
@@ -95,7 +98,7 @@ export async function createVideoProject({ directory, data, story, assets, portr
   await copyFile(join(here, 'video-scenes.mjs'), join(projectPath, 'scenes.js'));
   await copyFile(join(here, 'video-look.json'), join(projectPath, 'look.json'));
   const scriptPath = join(projectPath, 'script.md');
-  await writeFile(scriptPath, '# Strata codebase review\n\n' + IDS.map(id => `## ${id} {lead=0.05 hold=0.15 transition=fade}\n${marked(narration(captions[id]), id)}\n`).join('\n'));
+  await writeFile(scriptPath, '# Strata codebase review\n\n' + IDS.map(id => `## ${id} {lead=0.05 hold=0.15 transition=fade}\n${marked(narration(captions[id]), id, Boolean(reviewed))}\n`).join('\n'));
   await writeFile(join(projectPath, 'video.json'), JSON.stringify({ title: 'Strata codebase review', theme: './look.json', size: '1920x1080', fps: 30, language: 'en',
     voice: { provider: 'recording', src: 'assets/narration/' }, pace: 1.2, music: false, sfx: 'minimal', captions: true,
     transition: 'fade', camera: 'still', motionBlur: true, watermark: false, cover: 'origin@1.0', end: .6 }, null, 2));

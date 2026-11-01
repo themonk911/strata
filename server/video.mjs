@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { NarrationService, NARRATION_MODEL, NARRATION_VOICE, NARRATION_LIMITS, atomicWrite, readJSON, validateScenes } from './narration.mjs';
 import { createVideoProject } from './video-template.mjs';
+import { loadReviewedVideoStory } from './reviewed-video.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const ASSETS = ['origin', 'growth', 'focus', 'outlook'];
@@ -188,14 +189,15 @@ export class VideoService {
       await atomicWrite(join(directory, command + '-report.json'), JSON.stringify(result, null, 2)); return result;
     };
     try {
+      const reviewed = await loadReviewedVideoStory(this.root, data); signal.throwIfAborted();
       let history;
-      if (includeHistory && this.getHistory) {
+      if (!reviewed && includeHistory && this.getHistory) {
         job.activity = 'Classifying sampled commits with Decisions…'; await this.persist(job);
         try { history = await abortable(this.getHistory(data, activity), signal); signal.throwIfAborted(); job.history = summarizeHistory(history, data); }
         catch (error) { throw new Error('Requested Decisions history could not be prepared: ' + safeError(error)); }
       }
-      job.activity = 'Writing the video script with Astra…'; await this.persist(job);
-      const story = await abortable(this.writeStory(data, activity, history), signal); signal.throwIfAborted(); validateCaptureMapping(story, data);
+      job.activity = reviewed ? 'Preparing the reviewed script for this codebase…' : 'Writing the video script with Astra…'; await this.persist(job);
+      const story = reviewed || await abortable(this.writeStory(data, activity, history), signal); signal.throwIfAborted(); validateCaptureMapping(story, data);
       const project = await this.createProject({ directory, data, story, assets, portrait, history }); validateScenes(project.scenes);
       job.storyModel = story.model; job.storyEffort = story.effort; job.activity = 'Recording the narration…'; await this.persist(job);
       job.narration = await this.narration.generate({ jobId: job.id, scenes: project.scenes, directory: join(directory, 'assets/narration'), onActivity: activity, signal, retryNarration });

@@ -4,6 +4,7 @@ import report from './data.mjs';
 const C = { ink: '#23372e', muted: '#626d60', violet: '#735195', green: '#4d6a53', line: '#cdd5c8' };
 const number = value => Number.isFinite(value) ? value.toLocaleString('en-GB', { maximumFractionDigits: 0 }) : 'Unavailable';
 const point = id => report.history[report.chapters[id].snapshot];
+const reviewed = report.reviewedBoundaryStory;
 function fit(s, text, width, initial = 42, role = 'body') {
   let value = String(text), size = initial;
   const family = role === 'display' ? 'Instrument Serif' : role === 'mono' ? 'JetBrains Mono' : 'Inter';
@@ -16,13 +17,13 @@ function text(s, value, x, y, at, options = {}) {
   const fitted = fit(s, value, options.maxWidth || 1500, options.size || 40, options.font || 'body');
   return s.text(fitted.text, { x, y, at, size: fitted.size, align: 'left', color: 'ink', enter: 'fade', dur: .3, sfx: false, ...options, size: fitted.size });
 }
-function header(s, id, section) {
+function header(s, id, section, title = report.chapters[id].title) {
   s.camera([]);
   text(s, 'strata', 160, 103, -1, { size: 54, font: 'display', enter: 'none', maxWidth: 400 });
   text(s, report.privacyLabel, 1760, 105, -1, { size: 36, font: 'mono', align: 'right', color: 'muted', enter: 'none', maxWidth: 750 });
   s.line([[160, 145], [1760, 145]], { color: C.line, width: 2, at: -1, enter: 'none', sfx: false });
   text(s, `${section} / ${report.name}`, 160, 187, -1, { size: 36, font: 'mono', color: 'muted', enter: 'none', maxWidth: 1580 });
-  text(s, report.chapters[id].title, 160, 265, '#start', { size: 78, font: 'display', maxWidth: 1580, enter: 'rise' });
+  text(s, title, 160, 265, '#start', { size: 78, font: 'display', maxWidth: 1580, enter: 'rise' });
 }
 function city(s, asset, at, options = {}) {
   return s.image(`assets/${asset}.png`, { x: 1280, y: 568, w: 1000, h: 562, fit: 'contain', frame: 'none', border: C.line,
@@ -54,13 +55,40 @@ function signal(s, id, label, y, at) {
   text(s, `${label}${partial ? ' · partial' : ''}`, 195, y - 25, at, { size: 40, maxWidth: 570 });
   text(s, displayed, 779, y + 23, at, { size: available ? 58 : 38, font: available ? 'display' : 'body', align: 'right', color: available ? 'purple' : 'muted', maxWidth: 570 });
 }
+function reviewedFocus(s) {
+  const focus = reviewed.focus;
+  header(s, 'focus', '06 / FOLLOW THE IMPORTS', focus.title);
+  s.box('', { id: 'review-callers', x: 450, y: 545, w: 560, h: 330, fill: '#fbfaf6', stroke: C.line, at: '#start', sfx: false });
+  text(s, 'CALLING MODULES', 450, 426, '#start', { size: 36, font: 'mono', align: 'center', maxWidth: 500, color: 'muted' });
+  focus.callers.forEach((name, i) => text(s, name, 450, 505 + i * 80, '#start', { size: 56, font: 'display', align: 'center', maxWidth: 500 }));
+  s.box('', { id: 'review-internals', x: 1450, y: 565, w: 590, h: 410, fill: '#fbfaf6', stroke: C.line, at: '#detail', sfx: false });
+  text(s, 'INTERNAL FILES', 1450, 405, '#detail', { size: 36, font: 'mono', align: 'center', maxWidth: 520, color: 'muted' });
+  focus.targets.forEach((name, i) => text(s, name, 1450, 480 + i * 75, '#detail', { size: 42, font: 'mono', align: 'center', maxWidth: 520 }));
+  s.arrow('review-callers', 'review-internals', { at: '#detail', color: C.violet, width: 5, dashed: true, sfx: false });
+  text(s, 'BYPASS', 960, 505, '#detail', { size: 36, font: 'mono', align: 'center', maxWidth: 350, color: 'purple' });
+  text(s, `Front door: ${focus.entryPoint}`, 164, 805, '#finish', { size: 42, color: 'green', maxWidth: 1580 });
+  text(s, report.focus?.inferred ? 'Inferred gate · confirm intent' : 'Declared public gate', 164, 872, '#finish', { size: 36, color: 'muted', maxWidth: 1580 });
+}
+function reviewedRepair(s) {
+  const repair = reviewed.repair;
+  header(s, 'outlook', '07 / A CHANGE TO TEST', repair.title);
+  text(s, `${number(repair.count)} of ${number(repair.total)} imports`, 160, 365, '#start', { size: 66, font: 'display', color: 'purple', maxWidth: 1580 });
+  const lines = (value, y, label, at, color) => {
+    s.box('', { x: 960, y: y + 45, w: 1600, h: 170, fill: '#fbfaf6', stroke: C.line, at, sfx: false });
+    text(s, label, 195, y - 9, at, { size: 36, font: 'mono', color, maxWidth: 1500 });
+    String(value).split('\n').forEach((line, index) => text(s, line, 195, y + 58 + index * 44, at, { size: 40, font: 'mono', color, maxWidth: 1500 }));
+  };
+  lines(repair.before, 465, 'BEFORE', '#detail', 'purple');
+  lines(repair.after, 675, 'PROPOSED ROUTE', '#finish', 'green');
+  text(s, repair.caption, 160, 870, '#finish', { size: 36, color: 'muted', maxWidth: 1600 });
+}
 
 export default {
   origin(s) {
-    header(s, 'origin', '01 / CURRENT CODEBASE');
+    header(s, 'origin', '01 / CURRENT CODEBASE', reviewed ? report.name : undefined);
     city(s, 'outlook', '#start');
     metric(s, number(point('origin').files), 'source files today', 445, 443, '#start');
-    text(s, point('origin').date, 445, 635, '#detail', { size: 38, align: 'center', maxWidth: 610 });
+    text(s, reviewed ? 'Each building is a file' : point('origin').date, 445, 635, '#detail', { size: 38, align: 'center', maxWidth: 610 });
     text(s, 'Measured city · AI narration', 1280, 862, '#start', { size: 36, color: 'muted', align: 'center', maxWidth: 1000 });
   },
   boundaries(s) {
@@ -68,17 +96,22 @@ export default {
     s.draw({ x: 1360, y: 557, at: '#start' }, ctx => { ctx.fillStyle = '#e4e9dd'; ctx.strokeStyle = '#9eae95'; ctx.lineWidth = 3; ctx.beginPath(); ctx.roundRect(-380, -215, 760, 430, 30); ctx.fill(); ctx.stroke(); });
     text(s, 'A MODULE', 1360, 392, '#start', { size: 36, font: 'mono', align: 'center', maxWidth: 650 });
     s.box('Another module', { id: 'caller', x: 420, y: 577, w: 420, h: 130, size: 42, fill: '#fbfaf6', stroke: C.line, at: '#start', sfx: false });
-    s.box('Public API', { id: 'gate', x: 1010, y: 672, w: 300, h: 120, size: 42, color: 'green', at: '#detail', sfx: false });
+    s.box(reviewed ? 'Front door' : 'Public API', { id: 'gate', x: 1010, y: 672, w: 300, h: 120, size: 42, color: 'green', at: '#detail', sfx: false });
     s.arrow('caller', 'gate', { at: '#detail', color: C.green, width: 4, bend: .15, sfx: false });
-    s.box('Private file', { id: 'private', x: 1400, y: 507, w: 360, h: 125, size: 42, color: 'purple', at: '#finish', sfx: false });
+    s.box(reviewed ? 'Internal file' : 'Private file', { id: 'private', x: 1400, y: 507, w: 360, h: 125, size: 42, color: 'purple', at: '#finish', sfx: false });
     s.arrow('caller', 'private', { at: '#finish', color: C.violet, width: 4, dashed: true, bend: -.24, sfx: false });
-    text(s, 'Illustrative diagram · violet bypasses the public API', 960, 846, '#finish', { size: 36, align: 'center', color: 'muted', maxWidth: 1580 });
+    text(s, reviewed ? 'Illustrative diagram · violet bypasses the front door' : 'Illustrative diagram · violet bypasses the public API', 960, 846, '#finish', { size: 36, align: 'center', color: 'muted', maxWidth: 1580 });
   },
   growth(s) {
-    header(s, 'growth', '02 / GROWTH & REVIEWED HISTORY');
+    header(s, 'growth', reviewed ? '02 / CODE GROWTH' : '02 / GROWTH & REVIEWED HISTORY');
     city(s, 'origin', '#start', { x: 700, y: 610, w: 1020, out: '#detail' });
     city(s, 'growth', '#detail', { x: 700, y: 610, w: 1020 });
     metric(s, `${number(report.history[0].files)} → ${number(point('growth').files)}`, 'source files', 1490, 390, '#start', { size: 112 });
+    if (reviewed) {
+      text(s, `${number(point('growth').lines)} source lines`, 1490, 650, '#detail', { size: 42, align: 'center', maxWidth: 520 });
+      text(s, 'First snapshot → today', 1490, 775, '#finish', { size: 36, align: 'center', maxWidth: 520, color: 'muted' });
+      return;
+    }
     const decisions = report.decisions;
     if (decisions) {
       text(s, `${number(decisions.reviewed)} reviewed commits`, 1490, 585, '#detail', { size: 40, align: 'center', maxWidth: 530 });
@@ -92,6 +125,15 @@ export default {
     }
   },
   pressure(s) {
+    if (reviewed) {
+      const baseline = reviewed.baseline, latest = report.history.at(-1);
+      header(s, 'pressure', '04 / IMPORT SHORTCUTS');
+      metric(s, `${number(baseline.shortcuts)} → ${number(latest.shortcuts)}`, 'detected shortcuts', 490, 455, '#start', { size: 116 });
+      text(s, `${baseline.date} → today`, 490, 685, '#detail', { size: 38, align: 'center', maxWidth: 640 });
+      chart(s, report.history.slice(baseline.snapshot).map(p => p.shortcuts), 980, 425, 760, 285, '#detail', 'Shortcut count by snapshot');
+      text(s, 'Detected by Strata · review the intended entry points', 960, 860, '#finish', { size: 36, align: 'center', color: 'muted', maxWidth: 1600 });
+      return;
+    }
     header(s, 'pressure', '04 / LAST SNAPSHOT · EXPERIMENTAL');
     const current = point('pressure'), value = current.entropy;
     if (value) {
@@ -127,6 +169,7 @@ export default {
     }
   },
   focus(s) {
+    if (reviewed) return reviewedFocus(s);
     header(s, 'focus', '06 / A SPECIFIC DEPENDENCY');
     city(s, 'focus', '#start');
     text(s, 'Latest city overview', 1280, 865, '#finish', { size: 36, align: 'center', color: 'muted', maxWidth: 1000 });
@@ -138,6 +181,7 @@ export default {
     text(s, focus?.inferred ? 'Inferred gate · confirm intent' : focus?.walled ? 'Declared public gate' : 'No declared gate', 164, 846, '#finish', { size: 36, maxWidth: 610, color: 'muted' });
   },
   outlook(s) {
+    if (reviewed) return reviewedRepair(s);
     header(s, 'outlook', '07 / THE NEXT CHANGE');
     city(s, 'outlook', '#start', { out: report.portrait ? '#detail' : undefined });
     if (report.portrait) city(s, 'portrait', '#detail', { border: false });
