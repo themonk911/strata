@@ -111,6 +111,11 @@ class RepositoryHistory(unittest.TestCase):
         self.assertEqual(complete['meta']['entropy']['analyzedCommits'], 4)
         self.assertEqual(complete['snapshots'][-1]['entropy']['signals']['rework']['value'], 1)
         self.assertEqual([s['revision'] for s in default['snapshots']], [s['revision'] for s in complete['snapshots']])
+        configured = scan(self.repo, {'entropy': {'reworkDays': 7, 'reworkCohortDays': 7}}, maximum=2, history_analysis=True)
+        recent = configured['snapshots'][-1]['entropy']['signals']['rework']
+        self.assertIsNone(recent['value'])
+        self.assertEqual((recent['windowDays'], recent['cohortDays']), (7, 7))
+        self.assertEqual(configured['meta']['entropy']['reworkMethod']['cohortDays'], 7)
 
     def test_working_tree_heat_uses_content_and_preserves_unchanged_files(self):
         self.write('a.py', 'value = 1\n')

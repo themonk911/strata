@@ -31,6 +31,6 @@ The demo's centerpiece is an organic code city that becomes a concise infographi
 
 Do not expand into a general autonomous coding platform, a full architecture editor, or an unvalidated composite score. Do not label included Codex image generation as Image 2.5 without evidence of that backend.
 
-Private fin remains a local development input. Use approved public data for publication; the synthetic fixture is available. Do not publish generated images of private structure without review. Keep API use within the user's $50 credit constraint and continue using the signed-in Codex route where verified.
+The final local demo will use the selected real repository; the synthetic fixture is for testing. Review the exact captured views and diffs before recording or publishing them. Source publication does not include private scans or cached classifications. Keep API use within the user's $50 credit constraint and continue using the signed-in Codex route where verified.
 
 Keep the working explicit checker and repair-task export without spending the visual-polish window on live hooks. If public hosting or recording slips, drop stretch work immediately. Feature work ends at 16:00 regardless.

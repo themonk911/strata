@@ -99,12 +99,26 @@ test('local server enforces host, origin, routes, and JSON input before actions'
   const noWorkspace = await request(port, '/api/boundaries');
   assert.equal(noWorkspace.status, 400);
   assert.match(noWorkspace.content, /STRATA_REPO/);
+  const historyPost = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' };
+  for (const headers of [{ Host: 'attacker.example' }, { Origin: 'https://attacker.example' }]) {
+    assert.equal((await request(port, '/api/history-decisions', { ...historyPost, headers: { ...historyPost.headers, ...headers } })).status, 403);
+  }
+  const nonJsonHistory = await request(port, '/api/history-decisions', { method: 'POST', body: '{}' });
+  assert.equal(nonJsonHistory.status, 400);
+  assert.match(nonJsonHistory.content, /application\/json/);
+  const redirectedHistory = await request(port, '/api/history-decisions', { ...historyPost, body: '{"repo":"/tmp/untrusted"}' });
+  assert.equal(redirectedHistory.status, 400);
+  assert.match(redirectedHistory.content, /current workspace only/);
   for (const path of ['/.env.local', '/server/index.mjs', '/%2e%2e/.env.local', '/generated/../../.env.local']) {
     const response = await request(port, path);
     assert.equal(response.status, 404, path);
     assert.ok(!response.content.includes('not-public'));
   }
   assert.equal((await request(port, '/api/jobs/missing')).status, 404);
+  // The retired boundary judgment must not start a paid request, even from an old client.
+  assert.equal((await request(port, '/api/decision', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  })).status, 405);
   assert.equal((await request(port, '/api/city', { method: 'DELETE' })).status, 405);
   const contentType = await request(port, '/api/explain', { method: 'POST', body: '{}' });
   assert.equal(contentType.status, 400);

@@ -13,6 +13,7 @@
     "test": "python3 -m unittest discover -s tests -p 'test_*.py' && node --test tests/*.test.mjs",
     "scan": "python3 core/scan.py",
     "demo": "python3 scripts/demo.py",
+    "setup:video": "node scripts/setup-video.mjs",
     "package:plugin": "node scripts/package-plugin.mjs"
   },
   "engines": {

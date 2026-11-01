@@ -2,7 +2,7 @@
 
 **See what your agents leave behind.** Strata turns a local git repository into a 3D city you can scrub through time, then gives Codex the same module-boundary facts.
 
-Explore how a codebase grew, follow the paths across its boundaries, and turn its history into a forty-second infographic film. Codex can investigate a boundary when you want to go deeper.
+Start with **Take a tour**: explore how a codebase grew, understand its boundaries, and follow a concrete finding into the live city. An optional infographic film turns the same history into a shareable video. Codex can investigate a boundary when you want to go deeper.
 
 ## Run locally
 
@@ -24,6 +24,8 @@ STRATA_REPO=/path/to/repo npm run dev
 
 Open `http://127.0.0.1:4317`. The local server binds only to loopback. Use `STRATA_CONFIG=/path/to/strata.config.json` for an external configuration file, or put the config in the scanned repository.
 
+Choose **Take a tour** for seven clickable chapters covering the repository, module boundaries, growth, entropy and shortcuts, findings, and a focused example. You can still rotate the city, click buildings, and scrub history throughout. Choose **Film** to generate a narrated MP4 or use the silent browser preview.
+
 For a public, synthetic example with a real gate repair:
 
 ```sh
@@ -32,6 +34,8 @@ STRATA_DATA=.local/demo-city.json STRATA_REPO="$PWD/.demo-repo" npm run dev
 ```
 
 The fixture uses illustrative dates to make its history easy to explore.
+
+Use a Python interpreter that supports the scanned repository's syntax. For example, `PYTHON=python3.14 node bin/strata.mjs scan ...` and `PYTHON=python3.14 npm run dev` select the same parser for CLI scans and local rescans. Parse warnings mean incomplete import coverage, not a broken source file.
 
 ## Declare module gates
 
@@ -81,11 +85,33 @@ Large full-history runs can take several minutes; run them from the CLI. Without
 
 ## Codex and Decisions
 
-- **Create codebase film:** preview five animated chapters with real history, camera moves, counts, and charts. “Write with Astra” uses `gpt-6-astra` at `medium` reasoning through the signed-in Codex app-server to write an evidence-backed storyboard. The model chooses validated snapshot references; displayed numbers come from the scan. Storyboards are cached for the same evidence.
-- **Illustrate ending:** generate a city illustration for the final chapter through Codex. Saved illustrations are matched to their source dataset. Export a silent, captioned 40-second video locally using the browser’s MediaRecorder; supported browsers choose WebM or MP4. Keep the tab visible during recording. This is a rendered infographic film, not an image-to-video model call.
+**Investigate with Codex** is the district's main action. It uses your Codex login to inspect relevant source in the configured repository and suggest a focused repair and tests, without editing files. **Copy a repair task** lets you take the same boundary evidence into your own coding session. Neither action needs an API key.
+
+**Read the changes** makes Decisions part of the city walkthrough. Open it from the repository panel or the tour, then choose **Classify changes**. `gpt-6-luna` reads bounded commit subjects and source diffs in one batch and labels them as repairs, reversals, features, or unclear. Each card shows model confidence, the actual diff, and controls to compare city views. Labels are interpretation; file and shortcut counts remain scanner measurements.
+
+Classification sends the selected evidence to the OpenAI Decisions API only when requested. Add `OPENAI_API_KEY=...` to ignored `.env.local`; the key stays server-side. It works with private local repositories and keeps cached results under ignored `.local/history-decisions/`; revisiting a classification uses the cache. At most 50 displayed commits are classified per dataset. When sampled views skip intervening commits, the comparison is explicitly labeled as a wider interval rather than attributing all visible change to one commit. Repository publication and static-export privacy rules are unchanged.
+
+### Narrated codebase videos
+
+Install the optional local video renderer once:
+
+```sh
+# Also requires FFmpeg and Chrome/Chromium. On macOS: brew install ffmpeg
+npm run setup:video
+```
+
+This installs the pinned [Explainroo](https://github.com/vincentsch/explainroo) renderer in ignored `.local/tools/` and downloads its local speech-alignment model. Set `STRATA_EXPLAINROO_HOME` to use another installation location. Add `OPENAI_API_KEY=...` to ignored `.env.local`, keep Codex signed in with ChatGPT, and restart the app.
+
+Open **Film → Generate narrated video**. Strata captures views of the loaded code city; Astra at medium reasoning writes a short script from measured history, module names, and import evidence. OpenAI `gpt-audio-1.5` with the Marin voice reads the script, and Explainroo renders a captioned 1080p MP4 locally. A selected saved city illustration can appear as a labeled interpretation. Missing entropy signals and inferred gates remain explicit. For the full historical measurements, scan with `--history-analysis` before generating.
+
+The app shows progress and saves jobs so a finished film can be reopened. Videos, scripts, captions, and audio stay under ignored `.local/videos/`. Private repositories produce private local films; generation does not publish anything or change the static export privacy rule. The script is sent to OpenAI for narration. Codex receives the aggregate evidence used to write it; no additional repository source is sent by this video workflow.
+
+Audio is metered API usage, separate from the Codex plan. The app reserves at most $1 per script and $5 cumulatively in its local video ledger, caches matching recordings, and does not automatically retry a failed paid request. If narration adds or omits words, **Retry narration** permits one stronger attempt for that passage and reuses completed clips. Retry jobs share the original script's spending limit. These are local request bounds, not an account-wide spending limit. The silent 56-second browser export remains available without the narration API or renderer setup.
+
+- **Film:** preview seven animated chapters with real history, camera moves, counts, and charts. “Write with Astra” uses `gpt-6-astra` at `medium` reasoning through the signed-in Codex app-server to write an evidence-backed storyboard. The model chooses validated snapshot references; displayed numbers come from the scan. Storyboards are cached for the same evidence, and the script is editable before export.
+- **Illustrate ending:** generate a city illustration for the final chapter through Codex. Saved illustrations are matched to their source dataset. Export a silent, captioned 56-second video locally using the browser’s MediaRecorder; supported browsers choose WebM or MP4. Keep the tab visible during recording. This is a rendered infographic film, not an image-to-video model call.
 - **Investigate:** a local `codex app-server` uses your existing ChatGPT sign-in with a read-only sandbox and approvals disabled. Its instructions focus investigation on the named gate and source files.
 - **Illustrate:** the app sends a screenshot of the real city to Codex’s built-in image generation. The output is an artistic interpretation, kept separate from measured facts, using included-plan usage.
-- **Judge the gate:** optional Decisions API call with `gpt-6-luna`, using bounded import facts rather than repository source. Add `OPENAI_API_KEY=...` to `.env.local`. Never put the key in browser code. Repeated evidence is cached; the server caps requests at 50 per process and 40,000 request characters. This is a conservative request cap, not an account-wide dollar budget.
 
 The app-server process has `OPENAI_API_KEY` removed from its environment so these Codex actions do not accidentally use API-key billing. Ordinary Codex plan limits still apply.
 
@@ -115,17 +141,21 @@ Strata dogfoods declared gates for its own `core`, `server`, and `web` modules. 
 
 ## Experimental entropy index
 
-Strata includes **entropy v2** (`strata-entropy-v2`), an optional experimental 0–1 summary of three observable signals. Enable it with `--history-analysis` and open its breakdown to inspect the raw measurements and coverage. It has not been validated as a predictor of bugs, code quality, or maintenance cost.
+Strata includes **entropy v3** (`strata-entropy-v3`), an optional experimental 0–1 summary of three observable signals. Enable it with `--history-analysis` and open its breakdown to inspect the raw measurements and coverage. It has not been validated as a predictor of bugs, code quality, or maintenance cost.
 
 | Signal | Default measurement | Normalization anchor |
 | --- | --- | --- |
-| Rework | Of nonblank lines introduced at least 14 days ago, the fraction removed within 14 days of introduction. This uses cumulative mature cohorts, excluding the initial baseline and uncommitted edits. | 30% |
+| Rework | Of nonblank lines whose 14-day survival window completed in the latest 14 days, the fraction removed within 14 days of introduction. Older cohorts expire; the initial baseline and uncommitted edits are excluded. | 30% |
 | Scatter | How widely each committed change spreads changed lines across source modules: normalized Shannon entropy, averaged equally across changes in the last 30 days. | 1.0 |
 | Shortcuts | Live shortcuts divided by all resolved imports. Newly observed shortcuts count twice for 14 days, then once. | 10% |
 
 Each signal is divided by its fixed anchor and capped at 1; the index is their **equal-weight mean**. The 30% rework and 10% shortcut anchors are uncalibrated display saturation choices; scatter 1.0 is the mathematical maximum of normalized Shannon entropy. The data records this rationale in `meta.entropy.anchorBasis`. These choices are not learned or validated quality thresholds. The unweighted boundary-pressure chart remains a separate measure.
 
 Rework matches equal lines after removing whitespace, preserving reorders and exact moves within one commit. It does not recognize arbitrary semantic rewrites, line splitting/joining, or moves spread across commits; identical duplicate lines are ambiguous. First-parent commits represent integration events, not proof of reviewed pull requests.
+
+Rework's survival horizon (`entropy.reworkDays`) and recent cohort span (`entropy.reworkCohortDays`) are configured separately, both defaulting to 14 days. At snapshot time t, eligible introductions are in `(t − 28 days, t − 14 days]` by default. Every included cohort has a complete observation window; missing recent cohorts remain unavailable. Rescan old datasets to use this version.
+
+Prototype correlations used different signal definitions and are not validation of this index. Decisions labels do not establish predictive accuracy either. A chronological holdout backtest of the current signals remains future work; equal weights are a display choice, not learned predictive weights.
 
 **Partial coverage is explicit.** Unassigned test lines are excluded from scatter, with their paths, counts, and the attributable fraction reported. Changes with no attributable lines are excluded rather than scored as zero. District rework uses its known cohorts; unassigned cohorts still contribute to repository rework. A numeric composite based on partial coverage is labeled **Partial** in the app.
 
@@ -135,7 +165,7 @@ Rework matches equal lines after removing whitespace, preserving reorders and ex
 
 Python and JS/TS imports use ASTs. Resolution covers local static paths, configured Python roots, and configured JS aliases. Computed imports, external packages, runtime path changes, and some language-specific resolution rules are outside this version’s coverage. Gate definitions from the current config apply to the whole window; the city does not infer historical design intent. Large scans still load sampled file and import data into browser memory; reduce the sampling budget when needed.
 
-The experimental entropy index and import boundaries are descriptive signals. Decisions recommendations and generated illustrations are labeled as interpretation. Semantic rework tracking, causal validation, change coupling, reversals, and leftover-code detection are outside this release.
+The experimental entropy index and import boundaries are descriptive signals. Decisions classifications and generated illustrations are labeled as interpretation. Semantic rework tracking, causal validation, change coupling, measured reversal tracking, and leftover-code detection are outside this release.
 
 The Codex sandbox restricts writes, not filesystem reads. Instructions to avoid credentials and unrelated files are model guidance, not an enforced read allowlist. Hooks are advisory integration checks, not a security boundary; installation and trust remain under Codex's controls. Included-plan image generation has been verified, but its exact Image 2.5 backend has not. Decisions request and response handling are tested offline against the documented contract; ordinary tests do not verify live account access or consume API credits.
 
@@ -143,7 +173,7 @@ The Codex sandbox restricts writes, not filesystem reads. Instructions to avoid 
 
 The core scanner needs no account or hosted service. Output includes source paths, import relationships, counts, and commit times, but excludes file contents, commit messages, author names, and emails. That structure can still be private. Keep private scans under ignored `.local/` or `.strata/`.
 
-Codex investigation sends selected code to the signed-in Codex service; Decisions sends selected boundary facts to OpenAI; illustrations send the displayed city screenshot to Codex; Astra receives aggregate history and top district names for the film narrative. These are explicit button actions. Generated assets and cached responses stay in `.local/` and are not served as a directory listing. Downloaded videos contain visible codebase structure and need the same privacy review as screenshots.
+Codex investigation sends selected code to the signed-in Codex service; Decisions sends selected commit subjects and source diffs to OpenAI; illustrations send the displayed city screenshot to Codex; Astra receives aggregate history and top district names for the film narrative. These are explicit button actions. Generated assets and cached responses stay in `.local/` and are not served as a directory listing. Downloaded videos contain visible codebase structure and need the same privacy review as screenshots.
 
 To export an approved public dataset as a static page:
 

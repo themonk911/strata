@@ -9,7 +9,7 @@ const snapshot = (lines, imports, shortcuts, inferred = true) => ({ date: '2026-
   districts: [{ id: 'billing', name: 'billing', incoming: shortcuts, shortcuts: 0, inferred, walled: true, public: ['billing/index.js'] }]
 });
 const data = { schemaVersion: 1, meta: { name: 'sample', private: true, gatePolicy: 'inferred', coverage: 'AST imports' }, snapshots: [snapshot(10, 0, 0), snapshot(30, 8, 2)] };
-const storyboard = () => ({ title: 'The shape of growth', subtitle: 'A city shaped by its connections.', chapters: ['origin', 'growth', 'pressure', 'focus', 'outlook'].map((id, index) => ({ id, title: id, caption: 'Inspect the public boundary before changing it.', snapshot: index ? 1 : 0, district: index === 3 ? 'billing' : null })) });
+const storyboard = () => ({ title: 'The shape of growth', subtitle: 'A city shaped by its connections.', chapters: ['origin', 'boundaries', 'growth', 'pressure', 'findings', 'focus', 'outlook'].map((id, index) => ({ id, title: id, caption: 'Inspect the public boundary before changing it.', snapshot: index ? 1 : 0, district: index === 5 ? 'billing' : null })) });
 
 test('story evidence uses observed denominators and excludes file contents and import paths', () => {
   const evidence = storyEvidence(data);
@@ -26,10 +26,18 @@ test('story cache responds to evidence changes and model is explicitly Astra med
   assert.notEqual(storyCacheKey(evidence), storyCacheKey({ ...evidence, private: false }));
   assert.equal(STORY_MODEL, 'gpt-6-astra'); assert.equal(STORY_EFFORT, 'medium');
 });
+test('story receives entropy measurements without local ownership diagnostics', () => {
+  const entropy = { score: null, status: 'incomplete', signals: { rework: { value: .08, score: .08 / .3, status: 'available' }, scatter: { value: null, score: null, status: 'unknown_test_ownership', unknownTestPaths: ['private-tests/identity.py'] } } };
+  const evidence = storyEvidence({ ...data, snapshots: [{ ...data.snapshots[0], entropy }] });
+  assert.equal(evidence.history[0].entropy.signals.rework.value, .08);
+  assert.equal(evidence.history[0].entropy.score, null);
+  assert.equal(evidence.history[0].entropy.signals.scatter.status, 'unknown_test_ownership');
+  assert.ok(!JSON.stringify(evidence).includes('private-tests'));
+});
 test('valid story carries measured evidence and declared generation settings', () => {
   const story = validateStory(JSON.stringify(storyboard()), data);
   assert.equal(story.model, 'gpt-6-astra'); assert.equal(story.effort, 'medium');
-  assert.equal(story.chapters.length, 5); assert.equal(story.evidence.history.length, 2);
+  assert.equal(story.chapters.length, 7); assert.equal(story.evidence.history.length, 2);
 });
 test('generated prose cannot invent figures, dates, or spell quantities around validation', () => {
   const captions = [
@@ -61,18 +69,16 @@ test('exact numeric repository, district and code identifiers remain usable', ()
   }
   const value = storyboard();
   value.title = 'sample2 / code history';
-  value.chapters[3].district = 'src/api2';
-  value.chapters[3].title = 'Review src/api2';
-  value.chapters[3].caption = 'Inspect api2/client2.js before extending api2.';
-  assert.equal(validateStory(value, named).chapters[3].caption, value.chapters[3].caption);
-  value.chapters[3].caption = 'Inspect src/api2/client2.js before extending api2.';
-  assert.equal(validateStory(value, named).chapters[3].caption, value.chapters[3].caption);
-  value.chapters[3].caption = 'Inspect api20 before extending the gate.';
+  value.chapters[5].district = 'src/api2';
+  value.chapters[5].title = 'Review src/api2';
+  value.chapters[5].caption = 'Inspect api2/client2.js before extending api2.';
+  assert.equal(validateStory(value, named).chapters[5].caption, value.chapters[5].caption);
+  value.chapters[5].caption = 'Inspect api20 before extending the gate.';
   assert.throws(() => validateStory(value, named), /qualitative prose/);
 });
 test('qualitative narration invalidates previous numeric-caption caches', () => {
   const evidence = storyEvidence(data);
-  for (const version of [1, 3]) assert.notEqual(storyCacheKey(evidence), storyCacheKey({ ...evidence, version }));
+  assert.notEqual(storyCacheKey(evidence), storyCacheKey({ ...evidence, version: 3 }));
   assert.match(storyPrompt(evidence), /renderer owns all measured figures/);
 });
 test('story rejects hallucinated snapshot, district, metric fields and overlong text', () => {

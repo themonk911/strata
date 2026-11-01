@@ -24,6 +24,8 @@ export class City {
     this.scene.add(new THREE.HemisphereLight(0xf1f3ff, 0x889377, .9));
     this.lots = new Map(); this.positions = new Map(); this.fileIndex = new Map(data.files.map((f, i) => [f.path, i])); this.labels = [];
     this.targetHeights = new Float32Array(data.files.length); this.currentHeights = new Float32Array(data.files.length); this.targetColors = [];
+    this.firstSeen = new Map();
+    data.snapshots.forEach((snapshot, index) => { for (const path of Object.keys(snapshot.files)) if (!this.firstSeen.has(path)) this.firstSeen.set(path, index); });
     const footprint = new THREE.Shape(); footprint.moveTo(-.36, -.36); footprint.lineTo(.36, -.36); footprint.lineTo(.36, .36); footprint.lineTo(-.36, .36); footprint.closePath();
     this.box = new THREE.ExtrudeGeometry(footprint, { depth: .92, bevelEnabled: true, bevelSize: .035, bevelThickness: .04, bevelSegments: 2, steps: 1 });
     this.box.rotateX(-Math.PI / 2); this.box.translate(0, .04, 0);
@@ -67,6 +69,7 @@ export class City {
       mesh.rotation.y = -Math.atan2(b[1] - a[1], b[0] - a[0]); return mesh;
     };
     for (const lot of this.lots.values()) {
+      lot.firstSeen = Math.min(...lot.files.map(f => this.firstSeen.get(f.path) ?? Infinity));
       const shape = new THREE.Shape();
       lot.hull.forEach((p, i) => i ? shape.lineTo(p[0], -p[1]) : shape.moveTo(p[0], -p[1])); shape.closePath();
       const geometry = new THREE.ExtrudeGeometry(shape, { depth: .25, bevelEnabled: true, bevelSize: .12, bevelThickness: .06, bevelSegments: 2, steps: 1 });
@@ -94,8 +97,11 @@ export class City {
   addLabel(lot) {
     const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 80;
     const ctx = canvas.getContext('2d'); ctx.fillStyle = '#485a45'; ctx.font = '500 29px -apple-system, sans-serif'; ctx.textAlign = 'center';
-    const name = lot.id.split('/').pop().replaceAll('_', ' '); ctx.fillText(name, 256, 43);
+    const name = lot.id.split('/').pop().replaceAll('_', ' '); ctx.fillText(name, 256, 43, 490);
     const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
+    const darkCanvas = document.createElement('canvas'); darkCanvas.width = 512; darkCanvas.height = 80;
+    const darkInk = darkCanvas.getContext('2d'); darkInk.fillStyle = '#bac8b0'; darkInk.font = ctx.font; darkInk.textAlign = 'center'; darkInk.fillText(name, 256, 43, 490);
+    const darkTexture = new THREE.CanvasTexture(darkCanvas); darkTexture.colorSpace = THREE.SRGBColorSpace;
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true, opacity: .85 }));
     sprite.position.set(lot.x, .8, lot.z + lot.d / 2 + 1.2); sprite.scale.set(Math.min(10, lot.w + 2), 1.56, 1); sprite.userData.district = lot.id;
     const active = document.createElement('canvas'); active.width = 512; active.height = 120;
@@ -106,7 +112,8 @@ export class City {
     ink.fillStyle = '#fbfbf3'; ink.textAlign = 'center'; ink.fillText(name, 256, 62, 440);
     const selectedTexture = new THREE.CanvasTexture(active); selectedTexture.colorSpace = THREE.SRGBColorSpace;
     sprite.userData.restPosition = sprite.position.clone(); sprite.userData.restScale = sprite.scale.clone();
-    sprite.userData.texture = texture; sprite.userData.selectedTexture = selectedTexture;
+    sprite.userData.texture = texture; sprite.userData.darkTexture = darkTexture; sprite.userData.selectedTexture = selectedTexture;
+    sprite.userData.textWidth = Math.min(490, ctx.measureText(name).width); sprite.userData.pillWidth = labelWidth;
     this.scene.add(sprite); this.labels.push(sprite);
   }
   resize() {
@@ -149,7 +156,7 @@ export class City {
     const touched = new Set(snapshot.shortcuts.flatMap(e => [e.source, e.target]));
     for (let i = 0; i < this.data.files.length; i++) {
       const f = this.data.files[i], live = snapshot.files[f.path]; const active = live && live.lines > 0;
-      this.targetHeights[i] = active ? height(live.lines) : .025;
+      this.targetHeights[i] = active ? height(live.lines) : this.snapshot >= this.firstSeen.get(f.path) ? .025 : 0;
       if (immediate) this.currentHeights[i] = this.targetHeights[i];
       const age = live ? Math.max(0, snapshot.timestamp - (live.changed || 0)) / 86400 : 999;
       const color = new THREE.Color(this.dark ? '#7e9182' : C.building);
@@ -163,6 +170,7 @@ export class City {
     }
     this.buildings.instanceColor.needsUpdate = true;
     for (const lot of this.lots.values()) {
+      lot.mesh.visible = this.snapshot >= lot.firstSeen; lot.wallGroup.visible = lot.mesh.visible;
       lot.mesh.material.color.copy(this.dark ? new THREE.Color('#384b3e') : lot.baseColor);
       if (lot.id === this.selected) lot.mesh.material.color.lerp(new THREE.Color(this.dark ? '#73628f' : '#d8cdeb'), .33);
     }
@@ -170,7 +178,7 @@ export class City {
     for (const label of this.labels) {
       const selected = label.userData.district === this.selected, lot = this.lots.get(label.userData.district);
       label.material.opacity = selected ? 1 : .65;
-      label.material.map = selected ? label.userData.selectedTexture : label.userData.texture;
+      label.material.map = selected ? label.userData.selectedTexture : this.dark ? label.userData.darkTexture : label.userData.texture;
       label.position.copy(label.userData.restPosition); label.scale.copy(label.userData.restScale);
       if (selected) {
         const roof = Math.max(1, ...lot.files.map(f => height(snapshot.files[f.path]?.lines || 0)));
@@ -225,10 +233,29 @@ export class City {
   updateBuildings(rate) {
     for (let i = 0; i < this.data.files.length; i++) {
       this.currentHeights[i] += (this.targetHeights[i] - this.currentHeights[i]) * rate;
-      this.object.position.copy(this.positions.get(this.data.files[i].path)); this.object.scale.set(1, this.currentHeights[i], 1); this.object.updateMatrix(); this.buildings.setMatrixAt(i, this.object.matrix);
+      this.object.position.copy(this.positions.get(this.data.files[i].path)); const visible = this.currentHeights[i] > .002 ? 1 : 0; this.object.scale.set(visible, this.currentHeights[i], visible); this.object.updateMatrix(); this.buildings.setMatrixAt(i, this.object.matrix);
       this.object.position.y += this.currentHeights[i] + .005; this.object.scale.setScalar(this.currentHeights[i] > .04 ? 1 : 0); this.object.updateMatrix(); this.roofs.setMatrixAt(i, this.object.matrix);
     }
     this.buildings.instanceMatrix.needsUpdate = true; this.roofs.instanceMatrix.needsUpdate = true;
+  }
+  updateLabels() {
+    const width = this.renderer.domElement.clientWidth, h = this.renderer.domElement.clientHeight;
+    if (!h || !width) return;
+    const unit = (this.camera.top - this.camera.bottom) / this.camera.zoom / h, occupied = [];
+    // Keep type readable as the camera moves, and hide colliding minor labels.
+    const labels = [...this.labels].sort((a, b) => Number(b.userData.district === this.selected) - Number(a.userData.district === this.selected) || Number(this.lots.get(b.userData.district).walled) - Number(this.lots.get(a.userData.district).walled));
+    for (const label of labels) {
+      const selected = label.userData.district === this.selected, lot = this.lots.get(label.userData.district);
+      label.visible = this.snapshot >= lot.firstSeen;
+      if (!label.visible) continue;
+      const pixels = selected ? 56 : 28, ratio = selected ? 512 / 120 : 512 / 80;
+      label.scale.set(pixels * unit * ratio, pixels * unit, 1);
+      const point = label.position.clone().project(this.camera), x = (point.x + 1) * width / 2, y = (1 - point.y) * h / 2;
+      const textWidth = (selected ? label.userData.pillWidth : label.userData.textWidth) / 512 * pixels * ratio;
+      const box = { left: x - textWidth / 2 - 8, right: x + textWidth / 2 + 8, top: y - pixels / 2, bottom: y + pixels / 2 };
+      if (point.z < -1 || point.z > 1 || (!selected && occupied.some(b => box.left < b.right && box.right > b.left && box.top < b.bottom && box.bottom > b.top))) label.visible = false;
+      if (label.visible) occupied.push(box);
+    }
   }
   pick(event) {
     const r = this.element.getBoundingClientRect(); this.pointer.set((event.clientX - r.left) / r.width * 2 - 1, -(event.clientY - r.top) / r.height * 2 + 1);
@@ -246,8 +273,8 @@ export class City {
     this.roofs.material.color.set(dark ? '#b0c0a9' : '#e9ecde');
     this.sun.intensity = dark ? 1.7 : 2.8; this.setSnapshot(this.snapshot);
   }
-  capture() { this.renderer.render(this.scene, this.camera); return this.renderer.domElement.toDataURL('image/png'); }
-  captureCanvas() { this.renderer.render(this.scene, this.camera); return this.renderer.domElement; }
+  capture() { this.updateLabels(); this.renderer.render(this.scene, this.camera); return this.renderer.domElement.toDataURL('image/png'); }
+  captureCanvas() { this.updateLabels(); this.renderer.render(this.scene, this.camera); return this.renderer.domElement; }
   setCinematic(progress, districtId) {
     if (!this.cinematic) this.cinematic = { position: this.camera.position.clone(), target: this.controls.target.clone(), zoom: this.camera.zoom };
     this.controls.enabled = false; this.flight = null;
@@ -268,7 +295,7 @@ export class City {
     this.disposed = true; cancelAnimationFrame(this.frameId); this.resizeObserver.disconnect(); this.controls.dispose();
     const geometries = new Set(), materials = new Set(), textures = new Set();
     this.scene.traverse(object => { if (object.geometry) geometries.add(object.geometry); for (const material of [object.material].flat().filter(Boolean)) { materials.add(material); if (material.map) textures.add(material.map); } });
-    for (const label of this.labels) { textures.add(label.userData.texture); textures.add(label.userData.selectedTexture); }
+    for (const label of this.labels) { textures.add(label.userData.texture); textures.add(label.userData.darkTexture); textures.add(label.userData.selectedTexture); }
     for (const item of [...geometries, ...materials, ...textures]) item.dispose();
     this.renderer.dispose(); this.renderer.domElement.remove();
   }
@@ -281,6 +308,6 @@ export class City {
       for (const { curve, dot, offset } of this.curves || []) dot.position.copy(curve.getPoint((now / 9000 + offset) % 1));
       for (const { mesh, points, offset } of this.walkers || []) { const t = (now / 1700 + offset) % points.length, i = Math.floor(t); mesh.position.copy(points[i]).lerp(points[(i + 1) % points.length], t - i); mesh.position.y = .27; }
     }
-    if (!this.cinematic) this.controls.update(); this.renderer.render(this.scene, this.camera); this.callbacks.frame?.(now); this.frameId = requestAnimationFrame(this.frame);
+    if (!this.cinematic) this.controls.update(); this.updateLabels(); this.renderer.render(this.scene, this.camera); this.callbacks.frame?.(now); this.frameId = requestAnimationFrame(this.frame);
   }
 }

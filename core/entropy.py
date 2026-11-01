@@ -4,15 +4,15 @@ import fnmatch
 import math
 from pathlib import PurePosixPath
 
-VERSION = 'strata-entropy-v2'
+VERSION = 'strata-entropy-v3'
 ANCHORS = {'rework': 0.30, 'scatter': 1.0, 'shortcuts': 0.10}
 DAY = 86400
 
 def settings(config):
     supplied = config.get('entropy', {})
-    result = {'reworkDays': 14, 'scatterDays': 30, 'shortcutDays': 14, 'shortcutPremium': 2.0,
+    result = {'reworkDays': 14, 'reworkCohortDays': 14, 'scatterDays': 30, 'shortcutDays': 14, 'shortcutPremium': 2.0,
               'testOwners': supplied.get('testOwners', {})}
-    for name in ('reworkDays', 'scatterDays', 'shortcutDays'):
+    for name in ('reworkDays', 'reworkCohortDays', 'scatterDays', 'shortcutDays'):
         value = supplied.get(name, result[name])
         if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 365:
             raise ValueError('entropy.%s must be an integer between 1 and 365' % name)
@@ -45,7 +45,7 @@ def metadata(config):
                 'Tests map to an explicit owner, a containing declared module, a unique mirrored source path, a unique source-file owner, or the single owner of all resolved production imports. Unassigned tests are excluded from scatter with explicit attribution coverage; changes without attributable lines are not scored as zero.',
                 'A numeric index with partial coverage describes attributable changes and cohorts only; it is not a complete repository measurement. Unassigned rework cohorts still contribute to the repository rework ratio, but not to any district.',
                 'New live shortcuts receive the configured premium for the configured window, then weight one. All resolved outgoing imports, including internal imports, form the denominator.',
-                'Rework excludes the root baseline and immature cohorts; working-tree edits affect shortcuts only.',
+                'Rework uses cohorts that matured within the recent cohort window, excluding the root baseline, older cohorts and immature additions; working-tree edits affect shortcuts only.',
                 'Shallow history or nonmonotonic commit timestamps cannot support a complete historical index.'
             ]}
 

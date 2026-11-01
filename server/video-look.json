@@ -1,0 +1,16 @@
+{
+  "extends": "editorial",
+  "name": "strata-atlas",
+  "bg": "#f4f3ee",
+  "ink": "#23372e",
+  "muted": "#626d60",
+  "surface": "#fbfaf6",
+  "accent": "purple",
+  "background": "plain",
+  "transition": "fade",
+  "colors": { "purple": "#735195", "green": "#4d6a53", "gray": "#8c9787", "orange": "#a66635", "ink": "#23372e" },
+  "fonts": { "display": { "family": "Instrument Serif", "weight": 400 }, "body": { "family": "Inter", "weight": 400 }, "mono": { "family": "JetBrains Mono", "weight": 400 } },
+  "radius": 20,
+  "stroke": { "rough": false, "width": 2 },
+  "caption": { "bg": "rgba(35,55,46,0.92)", "fg": "#ffffff", "active": "#dfcaf3" }
+}

@@ -1,14 +1,15 @@
 import http from 'node:http';
 import { readFile, writeFile, mkdir, copyFile, stat, readdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, createReadStream } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { CodexClient } from './codex.mjs';
 import { BoundaryEditor } from './boundaries.mjs';
-import { decide, decisionCacheKey } from './decisions.mjs';
+import { HistoryDecisions } from './history-decisions.mjs';
 import { STORY_MODEL, STORY_EFFORT, storyEvidence, storyCacheKey, storySchema, storyPrompt, validateStory } from './story.mjs';
+import { VideoService } from './video.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const local = join(root, '.local');
@@ -18,9 +19,8 @@ const port = Number(process.env.PORT || 4317);
 const codex = new CodexClient({ cwd: join(local, 'agent-work') });
 const jobs = new Map();
 let activeJob = false;
-const boundaries = new BoundaryEditor({ workspace: configuredWorkspace, workspaceFile: join(local, 'workspace.json'), busy: () => activeJob, externalConfigOverride: Boolean(process.env.STRATA_CONFIG) });
-let apiCalls = 0;
-let apiInFlight = false;
+const boundaries = new BoundaryEditor({ workspace: configuredWorkspace, workspaceFile: join(local, 'workspace.json'), busy: () => activeJob || Boolean(videos.active), externalConfigOverride: Boolean(process.env.STRATA_CONFIG) });
+const videos = new VideoService({ root, loadKey, writeStory: composeVideoStory });
 const dataFile = resolve(process.env.STRATA_DATA || join(local, 'city.json'));
 const readCity = async () => JSON.parse(await readFile(dataFile, 'utf8'));
 function datasetIdentity(data) {
@@ -34,14 +34,15 @@ async function configuredWorkspace() {
   return { repo, config: process.env.STRATA_CONFIG || (sameWorkspace ? saved.config : undefined) };
 }
 const workspace = () => boundaries.workspace();
+const historyDecisions = new HistoryDecisions({ workspace, loadKey, cacheDir: join(local, 'history-decisions') });
 function loadKey() {
   if (existsSync(join(root, '.env.local'))) process.loadEnvFile(join(root, '.env.local'));
   return process.env.OPENAI_API_KEY;
 }
 function json(res, status, body) { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); }
-async function body(req) {
+async function body(req, limit = 8_000_000) {
   if (!req.headers['content-type']?.startsWith('application/json')) throw new Error('Expected application/json.');
-  let value = ''; for await (const piece of req) { value += piece; if (value.length > 8_000_000) throw new Error('Request is too large.'); }
+  let value = ''; for await (const piece of req) { value += piece; if (value.length > limit) throw new Error('Request is too large.'); }
   return JSON.parse(value || '{}');
 }
 function factsFor(data, input) {
@@ -55,7 +56,7 @@ function factsFor(data, input) {
     gatePolicy: data.meta.gatePolicy, caveat: 'Static import facts only; no source semantics or causal evidence. Boundary definitions may be inferred.' };
 }
 async function beginJob(kind, facts, screenshot, dataset) {
-  if (activeJob || boundaries.active) throw new Error('A local request is already running. Let it finish first.');
+  if (activeJob || videos.active || boundaries.active) throw new Error('A local request is already running. Let it finish first.');
   activeJob = true;
   const id = randomUUID();
   const job = { id, kind, status: 'running', activity: 'Connecting to your Codex login…', text: '', startedAt: Date.now(), dataset };
@@ -112,7 +113,7 @@ async function beginStory(data) {
     const job = { id, kind: 'story', status: 'done', activity: 'Storyboard ready', story, cached: true };
     jobs.set(id, job); return job;
   } catch { /* Missing or incomplete cache: generate again. */ }
-  if (activeJob || boundaries.active) throw new Error('A local request is already running. Let it finish first.');
+  if (activeJob || videos.active || boundaries.active) throw new Error('A local request is already running. Let it finish first.');
   activeJob = true;
   const job = { id, kind: 'story', status: 'running', activity: 'Astra is reading the shape of your history…', startedAt: Date.now() };
   jobs.set(id, job);
@@ -128,6 +129,46 @@ async function beginStory(data) {
     finally { activeJob = false; }
   })();
   return job;
+}
+async function composeVideoStory(data, onActivity) {
+  const evidence = storyEvidence(data);
+  const cachePath = join(local, 'generated', 'narrated-v1-' + storyCacheKey(evidence) + '.story.json');
+  try {
+    const saved = JSON.parse(await readFile(cachePath, 'utf8'));
+    return validateStory({ title: saved.title, subtitle: saved.subtitle, chapters: saved.chapters }, data, evidence);
+  } catch { /* A new measured history needs a new narration. */ }
+  onActivity?.('Astra is writing a short explanation of this repository…');
+  const prompt = storyPrompt(evidence) + `\n\nThis version will be spoken aloud in a narrated video. Each caption should be a natural sentence of 12–22 words; all seven captions together must be at most 150 words. Titles stay on screen and are not spoken. Use the owner's repository and module names only where useful. Describe observed changes and practical questions, not a fabricated repair or a claim to have read source code. Avoid marketing language, slogans, and generic conclusions. Explain boundaries plainly. If entropy signals are missing, say which measurement is unavailable instead of claiming an improvement. Use the latest snapshot for growth, pressure, findings, focus and outlook; it may be the working tree. Focus on the first district in topDistricts when present, matching the captured city view. Write for a developer showing their own codebase to a colleague. Keep numeric facts out of prose: the renderer supplies the measured figures.`;
+  const result = await codex.run({ cwd: join(local, 'agent-work'), model: STORY_MODEL, effort: STORY_EFFORT,
+    outputSchema: storySchema, prompt, timeout: 180000,
+    onEvent: event => { if (event.type !== 'text') onActivity?.('Astra is writing the narration…'); } });
+  const story = validateStory(result.text, data, evidence);
+  await writeFile(cachePath, JSON.stringify(story));
+  return story;
+}
+async function sendVideoMedia(req, res, media) {
+  if (!media) return json(res, 404, { error: 'Video asset not found.' });
+  const info = await stat(media.path), size = info.size;
+  let start = 0, end = size - 1, status = 200;
+  const range = req.headers.range;
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!match || (!match[1] && !match[2])) {
+      res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end();
+    }
+    if (match[1]) { start = Number(match[1]); if (match[2]) end = Math.min(end, Number(match[2])); }
+    else start = Math.max(0, size - Number(match[2]));
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) {
+      res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end();
+    }
+    status = 206;
+  }
+  res.writeHead(status, { 'Content-Type': media.type, 'Content-Length': end - start + 1,
+    'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store',
+    ...(status === 206 ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}) });
+  if (req.method === 'HEAD') return res.end();
+  const stream = createReadStream(media.path, { start, end });
+  stream.on('error', () => res.destroy()); res.on('close', () => stream.destroy()); stream.pipe(res);
 }
 async function portraits(data) {
   const items = [];
@@ -156,14 +197,36 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     const path = new URL(req.url, 'http://localhost').pathname;
     if (req.method === 'GET' && path === '/api/city') return json(res, 200, await readCity());
+    if (req.method === 'GET' && path === '/api/history-decisions') return json(res, 200, await historyDecisions.read(await readCity()));
+    if (req.method === 'POST' && path === '/api/history-decisions') {
+      const input = await body(req, 1000);
+      if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length) throw new Error('History classification uses the current workspace only.');
+      return json(res, 200, await historyDecisions.generate(await readCity()));
+    }
     if (req.method === 'GET' && path === '/api/boundaries') return json(res, 200, await boundaries.read());
     if (req.method === 'POST' && path === '/api/boundaries/preview') return json(res, 200, await boundaries.preview(await body(req)));
     if (req.method === 'POST' && path === '/api/boundaries/save') return json(res, 200, await boundaries.save(await body(req)));
     if (req.method === 'GET' && path === '/api/portraits') return json(res, 200, await portraits(await readCity()));
+    if (req.method === 'GET' && path === '/api/video/status') return json(res, 200, await videos.status(await readCity()));
+    if (req.method === 'POST' && path === '/api/video') {
+      if (activeJob || videos.active || boundaries.active) throw new Error('Let the current local request finish first.');
+      const input = await body(req, 10_000_000);
+      const data = await readCity();
+      if (activeJob || videos.active || boundaries.active) throw new Error('Let the current local request finish first.');
+      activeJob = true;
+      try { return json(res, 202, await videos.start(data, input)); }
+      finally { activeJob = false; }
+    }
+    if (req.method === 'GET' && /^\/api\/video\/jobs\/[a-f0-9-]+$/.test(path)) {
+      const job = await videos.get(path.split('/').pop());
+      return json(res, job ? 200 : 404, job || { error: 'Unknown video.' });
+    }
+    const videoAsset = /^\/api\/video\/assets\/([a-f0-9-]+)\/(video\.mp4|video\.srt|video\.cover\.jpg|script\.md|CREDITS\.md)$/.exec(path);
+    if (['GET', 'HEAD'].includes(req.method) && videoAsset) return await sendVideoMedia(req, res, await videos.media(videoAsset[1], videoAsset[2]));
     if (req.method === 'POST' && path === '/api/story') { await body(req); return json(res, 202, await beginStory(await readCity())); }
     if (req.method === 'GET' && path === '/api/status') {
       let status; try { status = await codex.status(); } catch { status = { signedIn: false, imageGeneration: false }; }
-      return json(res, 200, { ...status, decisions: Boolean(loadKey()), apiCalls, local: true, rescan: Boolean((await workspace()).repo), boundaries: await boundaries.available() });
+      return json(res, 200, { ...status, decisions: Boolean(loadKey()), local: true, rescan: Boolean((await workspace()).repo), boundaries: await boundaries.available() });
     }
     if (req.method === 'GET' && path.startsWith('/api/jobs/')) {
       const job = jobs.get(path.split('/').pop()); return json(res, job ? 200 : 404, job || { error: 'Unknown job.' });
@@ -172,7 +235,7 @@ const server = http.createServer(async (req, res) => {
       await body(req);
       const target = await workspace();
       if (!target.repo) throw new Error('Set STRATA_REPO to the local repository path before starting Strata.');
-      if (activeJob || boundaries.active) throw new Error('Let the current local request finish first.');
+      if (activeJob || videos.active || boundaries.active) throw new Error('Let the current local request finish first.');
       activeJob = true;
       const id = randomUUID(), job = { id, kind: 'scan', status: 'running', activity: 'Reading git history…' }; jobs.set(id, job);
       const args = [join(root, 'core/scan.py'), '--repo', target.repo, '--out', dataFile, '--working'];
@@ -184,17 +247,9 @@ const server = http.createServer(async (req, res) => {
       child.on('exit', code => { clearTimeout(timeout); job.status = code === 0 ? 'done' : 'error'; job.activity = 'Scan complete'; if (code !== 0) job.error = 'Scan failed or timed out. Run the CLI for diagnostics.'; activeJob = false; });
       return json(res, 202, job);
     }
-    if (req.method === 'POST' && ['/api/decision', '/api/explain', '/api/postcard'].includes(path)) {
+    if (req.method === 'POST' && ['/api/explain', '/api/postcard'].includes(path)) {
       const input = await body(req);
       const data = await readCity(), facts = factsFor(data, input);
-      if (path === '/api/decision') {
-        const cachePath = join(local, 'generated', decisionCacheKey(facts) + '.decision.json');
-        if (existsSync(cachePath)) return json(res, 200, { ...JSON.parse(await readFile(cachePath, 'utf8')), cached: true });
-        if (apiInFlight || apiCalls >= 50) throw new Error('Decisions request limit reached or another request is running.');
-        apiInFlight = true;
-        try { apiCalls++; const result = await decide(facts, loadKey()); await writeFile(cachePath, JSON.stringify(result)); return json(res, 200, result); }
-        finally { apiInFlight = false; }
-      }
       return json(res, 202, await beginJob(path === '/api/postcard' ? 'postcard' : 'explain', facts, input.screenshot, datasetIdentity(data)));
     }
     if (req.method !== 'GET') return json(res, 405, { error: 'Method not allowed.' });
@@ -209,4 +264,4 @@ const server = http.createServer(async (req, res) => {
   } catch (error) { json(res, 400, { error: error.code === 'ENOENT' ? 'Run the scanner and npm run build first.' : error.message }); }
 });
 server.listen(port, '127.0.0.1', () => console.log(`Strata: http://127.0.0.1:${port}`));
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { boundaries.close(); codex.close(); server.close(); process.exit(0); });
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => { historyDecisions.close(); boundaries.close(); codex.close(); server.close(); await videos.close(); process.exit(0); });

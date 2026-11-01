@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from core import scan
-from core.entropy import Ownership, EntropyTracker, aggregate, metadata, parse_numstat, sampled_values, scatter_change, signal
+from core.entropy import Ownership, EntropyTracker, aggregate, metadata, parse_numstat, sampled_values, scatter_change, signal, settings
 from core.rework import ReworkTracker
 from core.scan import module_for, TEST, analyze
 
@@ -35,10 +35,18 @@ class Entropy(unittest.TestCase):
 
     def test_anchor_basis_discloses_uncalibrated_scales(self):
         model = metadata({})
-        self.assertEqual(model['version'], 'strata-entropy-v2')
+        self.assertEqual(model['version'], 'strata-entropy-v3')
         self.assertEqual(model['anchorBasis']['kind'], 'heuristic')
         self.assertFalse(model['anchorBasis']['calibrated'])
         self.assertTrue(all(name in model['anchorBasis'] for name in model['anchors']))
+
+    def test_recent_cohort_window_is_configured_separately_from_survival(self):
+        params = settings({'entropy': {'reworkDays': 7, 'reworkCohortDays': 21}})
+        self.assertEqual((params['reworkDays'], params['reworkCohortDays']), (7, 21))
+        for invalid in [0, -1, True, 1.5, 366, '14']:
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, 'reworkCohortDays'):
+                    settings({'entropy': {'reworkCohortDays': invalid}})
 
     def test_sampled_values_keep_raw_shortcuts_separate_from_unmeasured_age_premium(self):
         sources = {'a/__init__.py': '', 'a/private.py': 'v=1', 'b/run.py': 'from a.private import v'}

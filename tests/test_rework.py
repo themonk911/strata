@@ -28,6 +28,65 @@ class ReworkTests(unittest.TestCase):
         self.assertEqual(mature['deletedLines'], 1)
         self.assertEqual(mature['value'], .5)
 
+    def test_recent_rework_is_not_diluted_by_old_surviving_lines(self):
+        tracker = self.tracker()
+        old = {'a/stable.py': ''.join('old_%d = %d\n' % (i, i) for i in range(100))}
+        tracker.observe({}, 0)
+        tracker.observe(old, DAY)
+        self.assertEqual(tracker.signals(15 * DAY)['repo']['value'], 0)
+        tracker.observe({**old, 'a/recent.py': 'removed_soon = True\n'}, 30 * DAY)
+        tracker.observe(old, 31 * DAY)
+        result = tracker.signals(44 * DAY)
+        self.assertEqual(result['repo']['eligibleLines'], 1)
+        self.assertEqual(result['repo']['deletedLines'], 1)
+        self.assertEqual(result['repo']['value'], 1)
+        self.assertEqual(result['districts']['a']['value'], 1)
+
+    def test_expired_cohorts_leave_missing_value_instead_of_zero(self):
+        tracker = self.tracker()
+        tracker.observe({}, 0)
+        tracker.observe({'a/new.py': 'gone = True\n'}, DAY)
+        tracker.observe({}, 2 * DAY)
+        self.assertEqual(tracker.signals(29 * DAY - 1)['repo']['value'], 1)
+        result = tracker.signals(29 * DAY)
+        for signal in (result['repo'], result['districts']['a']):
+            self.assertEqual(signal['eligibleLines'], 0)
+            self.assertEqual(signal['deletedLines'], 0)
+            self.assertEqual(signal['status'], 'no_mature_cohorts')
+            self.assertIsNone(signal['value'])
+
+    def test_cohort_window_excludes_old_boundary_and_includes_maturity_boundary(self):
+        tracker = ReworkTracker(lambda path: 'a', cohort_days=3)
+        tracker.observe({}, 0)
+        sources = {}
+        for day in (13, 14, 16, 17):
+            sources['a/day_%d.py' % day] = 'born_on_%d = True\n' % day
+            tracker.observe(sources.copy(), day * DAY)
+        result = tracker.signals(30 * DAY)['repo']
+        self.assertEqual(result['eligibleLines'], 2)
+        self.assertEqual(result['value'], 0)
+        self.assertEqual(result['windowDays'], 14)
+        self.assertEqual(result['cohortDays'], 3)
+        self.assertEqual(result['cohortStartExclusive'], 13 * DAY)
+        self.assertEqual(result['cohortEndInclusive'], 16 * DAY)
+
+    def test_survival_horizon_and_cohort_span_are_independent(self):
+        tracker = ReworkTracker(lambda path: 'a', window_days=4, cohort_days=2)
+        tracker.observe({}, 0)
+        tracker.observe({'a/new.py': 'gone = True\n'}, DAY)
+        tracker.observe({}, 4 * DAY)
+        self.assertIsNone(tracker.signals(4 * DAY)['repo']['value'])
+        self.assertEqual(tracker.signals(5 * DAY)['repo']['value'], 1)
+        self.assertEqual(tracker.signals(6 * DAY)['repo']['value'], 1)
+        self.assertIsNone(tracker.signals(7 * DAY)['repo']['value'])
+
+    def test_window_lengths_must_be_positive_finite_numbers(self):
+        for field in ('window_days', 'cohort_days'):
+            for value in (0, -1, float('inf'), float('nan'), '14', None, True):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaisesRegex(ValueError, field):
+                        ReworkTracker(lambda path: 'a', **{field: value})
+
     def test_late_deletion_is_not_early_rework(self):
         tracker = self.tracker()
         tracker.observe({}, 0)

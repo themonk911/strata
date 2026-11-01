@@ -100,7 +100,7 @@ def extract_imports(p, text, paths, config, parsed_js=None):
                 PY_IMPORT_CACHE[text] = None
         nodes = PY_IMPORT_CACHE[text]
         if nodes is None:
-            return [], ['Python syntax could not be parsed: ' + p]
+            return [], ['Python syntax could not be parsed: %s (scanner Python %d.%d; use PYTHON with a version that supports the repository syntax).' % (p, sys.version_info.major, sys.version_info.minor)]
         for n in nodes:
             if isinstance(n, ast.Import):
                 for alias in n.names:
@@ -278,7 +278,8 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000, histor
     entropy = None
     if history_analysis:
         ownership = Ownership(modules, config, module_for, lambda p: bool(TEST.search(p)))
-        rework = ReworkTracker(ownership.owner, window_days=entropy_settings(config)['reworkDays'])
+        params = entropy_settings(config)
+        rework = ReworkTracker(ownership.owner, window_days=params['reworkDays'], cohort_days=params['reworkCohortDays'])
         entropy = EntropyTracker(config, ownership, rework, history_complete=not shallow)
     numstats = parse_numstat(git(repo.path, 'log', '--first-parent', '--reverse', '--root', '--diff-merges=first-parent',
                                  '--format=%x00@@%H%x00', '--numstat', '-z', '-w', '--no-renames', head), include_path) if head and history_analysis else {}
@@ -340,9 +341,11 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000, histor
         touched = [p for p in lines[1:] if p in all_files]
         if touched:
             changes.append({'time': int(lines[0]), 'files': touched})
-    rework_days = entropy_settings(config)['reworkDays']
-    rework_method = {**REWORK_METHOD, 'windowDays': rework_days,
-                     'definition': REWORK_METHOD['definition'].replace('14 days', '%d days' % rework_days)}
+    params = entropy_settings(config)
+    rework_days, cohort_days = params['reworkDays'], params['reworkCohortDays']
+    rework_method = {**REWORK_METHOD, 'windowDays': rework_days, 'cohortDays': cohort_days,
+                     'definition': ('Of nonblank source lines whose %d-day survival window completed in the last %d days, '
+                                    'the share removed within %d days of introduction.') % (rework_days, cohort_days, rework_days)}
     entropy_meta = {**entropy_metadata(config), 'reworkMethod': rework_method, 'firstParentCommits': len(commits),
                     'historyComplete': not shallow, 'historyAnalysis': history_analysis,
                     'analysisMode': 'full_history' if history_analysis else 'sampled', 'analyzedCommits': len(observed)}

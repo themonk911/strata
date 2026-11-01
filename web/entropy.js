@@ -4,7 +4,7 @@ const names = { rework: 'Rework', scatter: 'Scatter', shortcuts: 'Shortcuts' };
 export function signalReason(signal) {
   if (signal?.status === 'history_analysis_disabled') return 'Run strata scan --history-analysis for historical metrics.' + (Number.isFinite(signal.rawRatio) ? ' The raw shortcut ratio excludes the age premium.' : '');
   if (signal?.status === 'unknown_test_ownership') return signal.unknownTestFiles ? `${signal.unknownTestFiles} tests in recent changes have no single module owner.` : 'Some test lines have no single module owner.';
-  return ({ no_mature_cohorts: 'Added lines need a full observation window.', no_recent_changes: 'No changes in this observation window.', no_resolved_imports: 'No resolved imports to measure.', shallow_history: 'Full Git history is needed.', nonmonotonic_timestamps: 'Commit dates are out of order.', snapshot_precedes_history: 'This snapshot predates the observed history.' })[signal?.status] || signal?.reason || 'Needs more history data.';
+  return ({ no_mature_cohorts: 'No fully observed additions in the recent cohort window.', no_recent_changes: 'No changes in this observation window.', no_resolved_imports: 'No resolved imports to measure.', shallow_history: 'Full Git history is needed.', nonmonotonic_timestamps: 'Commit dates are out of order.', snapshot_precedes_history: 'This snapshot predates the observed history.' })[signal?.status] || signal?.reason || 'Needs more history data.';
 }
 export function signalValue(id, value) { return Number.isFinite(value) ? id === 'scatter' ? value.toFixed(2) : (value * 100).toFixed(1) + '%' : 'Unavailable'; }
 function coverageNote(signal) {

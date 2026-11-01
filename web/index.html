@@ -4,7 +4,7 @@
 <body>
   <header class="topbar">
     <a class="wordmark" href="./" aria-label="Strata home"><span class="mark"><i></i><i></i><i></i></span>strata<span class="beta">A LIVING ATLAS OF CODE</span></a>
-    <div class="top-actions"><span id="connection" class="connection"><span class="status-dot"></span>Local workspace</span><div class="utility-actions"><button id="rescan" class="icon-button" aria-label="Rescan the working tree" title="Rescan the working tree">↻</button><button id="theme" class="icon-button" aria-label="Switch color theme" title="Switch color theme">◐</button><button id="about" class="icon-button" aria-label="How to read this city" title="How to read this city">?</button></div><button id="postcard" class="portrait-button" title="Generate a city illustration with Codex" aria-label="Illustrate city"><span aria-hidden="true">✧</span><span class="portrait-label">Illustrate</span></button><button id="film" class="primary compact film-launch"><span class="film-play" aria-hidden="true">▶</span><span class="film-button-label">Create codebase film</span><span class="film-button-arrow" aria-hidden="true">↗</span></button></div>
+    <div class="top-actions"><span id="connection" class="connection"><span class="status-dot"></span>Local workspace</span><div class="utility-actions"><button id="rescan" class="icon-button" aria-label="Rescan the working tree" title="Rescan the working tree">↻</button><button id="theme" class="icon-button" aria-label="Switch color theme" title="Switch color theme">◐</button><button id="about" class="icon-button" aria-label="How to read this city" title="How to read this city">?</button></div><button id="postcard" class="portrait-button" title="Generate a city illustration with Codex" aria-label="Illustrate city"><span aria-hidden="true">✧</span><span class="portrait-label">Illustrate</span></button><button id="film" class="portrait-button" title="Create and export a captioned infographic"><span class="film-play" aria-hidden="true">▶</span><span class="film-button-label">Film</span><span class="film-button-arrow" aria-hidden="true">↗</span></button><button id="tour" class="primary compact">Take a tour ↗</button></div>
   </header>
   <main>
     <div id="viewport" aria-label="Interactive 3D code city. Use the district list to navigate with a keyboard."></div>
@@ -15,6 +15,7 @@
       <p class="subtitle">A place for every file.<br>A story in every change.</p>
       <div class="repo-tag"><span class="status-dot"></span><span id="repo-privacy">Local repository</span></div>
       <button id="edit-boundaries" class="boundary-launch" hidden>Edit boundaries <span aria-hidden="true">↗</span></button>
+      <button id="history-decisions" class="boundary-launch">Read the changes <span>Decisions ↗</span></button>
       <section id="repo-entropy" class="entropy-card" aria-label="Repository entropy"></section>
       <div class="overview"><div><strong id="file-count">—</strong><span>buildings</span></div><div><strong id="line-count">—</strong><span>lines of code</span></div></div>
       <div class="section-label"><span>DISTRICTS</span><span id="district-count"></span></div>
@@ -36,7 +37,7 @@
       <div class="section-label"><span>A PATH WORTH FOLLOWING</span><span class="violet">◎</span></div>
       <div id="desire-path" class="desire-path"></div>
       <div id="gate-detail" class="gate-detail"></div>
-      <div class="agent-actions"><button id="judge" class="violet-button">◇ Read this boundary <span>Decisions</span></button><details class="repair-tools"><summary>Work on this boundary <span aria-hidden="true">+</span></summary><div class="repair-tools-content"><button id="explain" class="secondary-button">Investigate with Codex <span>↗</span></button><button id="copy-task" class="text-button">Copy a repair task</button></div></details></div>
+      <div class="agent-actions"><button id="explain" class="violet-button" title="Ask Codex to inspect this district and recommend a focused next step.">Investigate with Codex <span>↗</span></button><button id="copy-task" class="text-button">Copy a repair task</button></div>
       <div id="intelligence" class="intelligence" aria-live="polite"></div>
       <details class="evidence"><summary>Inspect the evidence <span>↗</span></summary><div id="evidence-list"></div></details>
       <p class="inspector-footnote">A signal to investigate, not a verdict on your code.</p>

@@ -12,3 +12,12 @@ test('district envelopes do not overlap', () => {
   const {lots} = createLayout(data);
   for(let i=0;i<lots.length;i++) for(let j=i+1;j<lots.length;j++) assert.ok(Math.hypot(lots[i].x-lots[j].x,lots[i].z-lots[j].z) >= lots[i].r+lots[j].r+1.7);
 });
+test('isolated neighborhoods remain compact without overlapping a large neighborhood', () => {
+  const districts = Array.from({length:25}, (_, i) => ({id:`module-${i}`, walled:i < 5}));
+  const files = districts.flatMap((d, i) => Array.from({length:i === 8 ? 120 : i % 7 + 1}, (_, j) => ({path:`${d.id}/${j}.ts`, district:d.id, gate:j === 0})));
+  const {lots, span, positions} = createLayout({files, snapshots:[{districts, imports:[]}]});
+  assert.equal(positions.size, files.length);
+  const areaRadius = Math.sqrt(lots.reduce((area, l) => area + (l.r + 1.8) ** 2, 0));
+  assert.ok(span < areaRadius * 4, 'disconnected lots should stay within a compact city envelope');
+  for(let i=0;i<lots.length;i++) for(let j=i+1;j<lots.length;j++) assert.ok(Math.hypot(lots[i].x-lots[j].x,lots[i].z-lots[j].z) >= lots[i].r+lots[j].r+1.7);
+});

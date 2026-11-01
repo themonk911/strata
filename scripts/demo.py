@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Create a clearly synthetic git history for tests and public demos."""
+import argparse
 import datetime as dt
 import json
 import os
@@ -8,11 +9,21 @@ import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[1]
-repo = root / '.demo-repo'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--repo', type=Path, default=root / '.demo-repo', help='New synthetic repository directory; existing directories are never overwritten.')
+parser.add_argument('--out', type=Path, default=root / '.local/demo-city.json', help='Generated public city JSON path.')
+args = parser.parse_args()
+repo = args.repo.resolve()
 if repo.exists():
-    print('Synthetic demo already exists. Remove .demo-repo explicitly if you want to recreate it.')
+    print('Synthetic demo already exists at %s. Choose a new --repo directory to create another fixture.' % repo)
     sys.exit(0)
-repo.mkdir()
+repo.mkdir(parents=True)
+# Fifteen integration points span 28 days, so the early 14-day rework
+# cohorts mature before the repair. These are synthetic dates, not build dates.
+start = dt.datetime(2026, 9, 1, 12, tzinfo=dt.timezone.utc)
+def synthetic_date(step):
+    return (start + dt.timedelta(days=(step - 1) * 2)).isoformat()
+
 def git(*args, date=None):
     env = dict(os.environ, GIT_AUTHOR_NAME='Strata demo', GIT_AUTHOR_EMAIL='demo@example.invalid', GIT_COMMITTER_NAME='Strata demo', GIT_COMMITTER_EMAIL='demo@example.invalid')
     if date:
@@ -27,7 +38,7 @@ config = {'name': 'Harbor · synthetic demo', 'private': False, 'pythonRoots': [
 for m in modules:
     p = repo / 'app' / m; p.mkdir(); (p / '__init__.py').write_text('from .service import summary\n')
     (p / 'service.py').write_text('def summary(records):\n    return {"count": len(records)}\n')
-git('add', '.'); git('commit', '-qm', 'Synthetic: establish public gates', date='2026-09-01T12:00:00+00:00')
+git('add', '.'); git('commit', '-qm', 'Synthetic: establish public gates', date=synthetic_date(1))
 for day in range(2, 15):
     for index, m in enumerate(modules):
         filename = ['validate', 'format', 'calculate', 'schedule', 'render', 'deliver'][index]
@@ -40,13 +51,13 @@ for day in range(2, 15):
             if m == 'billing':
                 continue
             (repo / 'app' / m / 'invoice.py').write_text('from app.billing.rates import rate\n\ndef total(amount):\n    return amount + rate(amount)\n')
-    git('add', '.'); git('commit', '-qm', 'Synthetic: add a small feature', date=f'2026-09-{day:02d}T12:00:00+00:00')
+    git('add', '.'); git('commit', '-qm', 'Synthetic: add a small feature', date=synthetic_date(day))
 git('tag', 'before-repair')
 # A genuine, behavior-preserving repair: expose one operation and update callers.
 (repo / 'app/billing/__init__.py').write_text('from .service import summary\nfrom .rates import rate\n')
 for m in ['catalog', 'orders', 'shipping']:
     p = repo / 'app' / m / 'invoice.py'
     p.write_text(p.read_text().replace('from app.billing.rates import rate', 'from app.billing import rate'))
-git('add', '.'); git('commit', '-qm', 'Synthetic: expose rate through the billing gate', date='2026-09-15T12:00:00+00:00'); git('tag', 'after-repair')
-subprocess.run([sys.executable, str(root / 'core/scan.py'), '--repo', str(repo), '--out', str(root / '.local/demo-city.json')], check=True)
+git('add', '.'); git('commit', '-qm', 'Synthetic: expose rate through the billing gate', date=synthetic_date(15)); git('tag', 'after-repair')
+subprocess.run([sys.executable, str(root / 'core/scan.py'), '--repo', str(repo), '--out', str(args.out.resolve())], check=True)
 print('Created a synthetic history with a real before/after gate repair. Private workspace data was not used.')
