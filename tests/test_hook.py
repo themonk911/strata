@@ -178,6 +178,15 @@ class GateHook(unittest.TestCase):
         self.assertIn('could not fully check', result['additionalContext'])
         self.assertNotIn('permissionDecision', result)
 
+    def test_swift_edit_discloses_unavailable_checks_without_blocking_or_writing(self):
+        result = hook.evaluate(self.payload('Write', {
+            'file_path': 'Screen.swift', 'content': 'struct Screen {}\n',
+        }))['hookSpecificOutput']
+        self.assertIn('Swift', result['additionalContext'])
+        self.assertIn('unavailable', result['additionalContext'])
+        self.assertNotIn('permissionDecision', result)
+        self.assertFalse((self.root / 'Screen.swift').exists())
+
     def test_stop_blocks_new_working_tree_shortcut(self):
         self.commit()
         (self.root / 'consumer.mjs').write_text('import { Client } from "./server/internal.mjs";\n')

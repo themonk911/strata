@@ -61,7 +61,7 @@ Trusted Strata hooks read the saved rules on their next check; the editor does n
 }
 ```
 
-Paths are repository-relative. Public paths and adapter exceptions accept glob patterns. Tests are exempt. Without declarations, package entry points are inferred and visibly labeled as hypotheses. Confirm those boundaries before treating a shortcut as something to fix.
+Paths are repository-relative. Public paths and adapter exceptions accept glob patterns. Tests are exempt. Without declarations, package entry points are inferred and visibly labeled as hypotheses. Confirm those boundaries before treating a shortcut as something to fix. Import and gate checks cover Python and JS/TS; Swift type references do not establish gate violations.
 
 Inference recognizes outer packages such as `billing/` and `src/billing/` when they contain an entry point and another source file. Nested subpackages belong to that outer module instead of creating additional walls. `src` and configured Python roots are source containers; declare narrower boundaries when they match your architecture. Python absolute imports search the repository root and `src` by default; set `pythonRoots` for other layouts. Relative Python imports stay within the importing file's package. JavaScript aliases require explicit configuration. Source folders such as `data/` are included; dependency, build, and tool-state folders remain excluded.
 
@@ -71,7 +71,7 @@ node bin/strata.mjs check --repo /path/to/repo --base HEAD
 node bin/strata.mjs scan --repo /path/to/repo --working --out .local/city.json
 ```
 
-`check` exits 1 for newly added shortcuts and 2 if analysis fails. Existing shortcuts are reported but do not fail a change. In a repository without commits, `check` compares the working tree with an empty baseline, and `scan` shows the working tree.
+`check` exits 1 for newly added shortcuts and 2 if analysis fails or has coverage warnings, including unavailable Swift gate checks. Existing shortcuts are reported but do not fail a change. In a repository without commits, `check` compares the working tree with an empty baseline, and `scan` shows the working tree.
 
 `scan` samples first-parent commits, including multiple commits on the same day, and keeps the first and latest commits. It uses up to 70 historical snapshots by default; `--max-snapshots` accepts 2–366. For larger repositories, a budget of 100,000 file/import records reduces the sample count. Adjust it with `--max-snapshot-records`. This is an estimate based on HEAD, not a hard byte limit. `--working` adds a current snapshot, and deleted files retain their plots in the layout.
 
@@ -163,7 +163,9 @@ Prototype correlations used different signal definitions and are not validation 
 
 ## Limitations
 
-Python and JS/TS imports use ASTs. Resolution covers local static paths, configured Python roots, and configured JS aliases. Computed imports, external packages, runtime path changes, and some language-specific resolution rules are outside this version’s coverage. Gate definitions from the current config apply to the whole window; the city does not infer historical design intent. Large scans still load sampled file and import data into browser memory; reduce the sampling budget when needed.
+Python and JS/TS imports use ASTs, including `.mts` and `.cts` sources. Resolution covers local static paths, configured Python roots, and configured JS aliases. Computed imports, external packages, runtime path changes, and some language-specific resolution rules are outside this version’s coverage. Gate definitions from the current config apply to the whole window; the city does not infer historical design intent. Large scans still load sampled file and relationship data into browser memory; reduce the sampling budget when needed.
+
+Swift files appear in the city, activity, full-history rework/scatter, and Decisions commit diffs. A lightweight lexical pass matches references to uniquely named top-level types, excluding comments, string literals, private declarations and ambiguous names. These links are stored separately as `inferredReferences`, guide layout, and are labeled as inference in district evidence. They never count as resolved imports, shortcuts, test ownership, or hook violations. This is not Swift compiler analysis: build targets, conditional compilation, macros, overloads, member lookup and interpolated-string references are outside coverage. Swift syntax is not validated; detected lexical failures produce warnings. Swift-only districts have no import-boundary measurement. Native `*Tests` directories and `*Tests.swift` files are treated as tests, with unassigned ownership kept explicit.
 
 The experimental entropy index and import boundaries are descriptive signals. Decisions classifications and generated illustrations are labeled as interpretation. Semantic rework tracking, causal validation, change coupling, measured reversal tracking, and leftover-code detection are outside this release.
 

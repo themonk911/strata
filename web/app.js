@@ -5,11 +5,13 @@ import { entropyCard, metricHistory, historyPath } from './entropy.js';
 import { openTour } from './tour.js';
 import { escape } from './html.js';
 import { openHistoryDecisions } from './history-decisions.js';
+import { districtPresentation } from './districts.js';
 import './history-decisions.css';
 
 const $ = id => document.getElementById(id);
 const number = n => new Intl.NumberFormat('en-GB', { notation: n > 99999 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(n);
 const date = value => value === 'Working tree' ? value : new Date(value + 'T12:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+let districtStyles = new Map();
 let data, city, selected, selectedFile = null, current = 0, playing = false, speed = 1, lastTick = 0, status = {}, toastTimer, activeJob = null, closeTour = null, closeHistory = null, historyResults = null;
 const snapshot = () => data.snapshots[Math.round(current)];
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 4500); }
@@ -37,7 +39,10 @@ function renderDistrictList() {
   const search = $('search').value.toLowerCase(); const s = snapshot();
   const districts = [...s.districts].sort((a, b) => Number(b.walled) - Number(a.walled) || b.incoming - a.incoming || a.name.localeCompare(b.name));
   $('district-count').textContent = districts.length;
-  $('district-list').innerHTML = districts.filter(d => d.id.toLowerCase().includes(search)).map(d => `<button class="district-button ${selected === d.id ? 'active' : ''}" data-district="${escape(d.id)}" aria-pressed="${selected === d.id}"><span class="district-icon">${d.walled ? '▥' : '▧'}</span><span class="district-name">${escape(d.name.replaceAll('_', ' '))}</span><span class="count">${d.incoming || '·'}</span></button>`).join('');
+  $('district-list').innerHTML = districts.filter(d => d.id.toLowerCase().includes(search)).map(d => {
+    const style = districtStyles.get(d.id);
+    return `<button class="district-button ${selected === d.id ? 'active' : ''}" data-district="${escape(d.id)}" title="${escape(d.id)} · ${escape(style.title)}" aria-pressed="${selected === d.id}"><span class="district-icon" style="color:${style.color}">${d.walled ? '▥' : '▧'}</span><span class="district-name">${escape(style.label)}</span><span class="count">${d.incoming || '·'}</span></button>`;
+  }).join('');
   for (const button of $('district-list').querySelectorAll('button')) button.onclick = () => select(button.dataset.district);
 }
 function selectedFacts() {
@@ -49,22 +54,25 @@ function renderInspector() {
   $('district-entropy').hidden = !d;
   $('district-entropy').innerHTML = entropyCard(d?.entropy, 'District entropy');
   if (!d) { $('gate-badge').textContent = ''; $('district-path').textContent = selected || ''; $('district-trend').innerHTML = ''; $('district-title').textContent = selected?.split('/').pop() || 'Choose a district'; $('district-meaning').textContent = 'This district does not exist at this point in history.'; $('incoming').textContent = '0'; $('desire-path').textContent = ''; $('gate-detail').textContent = ''; $('evidence-list').textContent = ''; return; }
-  $('district-title').textContent = d.name.replaceAll('_', ' '); $('district-path').textContent = d.id;
+  $('district-title').textContent = districtStyles.get(d.id)?.label || d.name.replaceAll('_', ' '); $('district-path').textContent = d.id;
   $('gate-badge').textContent = d.walled ? d.inferred ? 'Inferred gate · review the boundary' : 'Declared public gate' : 'Open neighborhood';
   $('incoming').textContent = d.incoming;
   const values = data.snapshots.map(s => s.districts.find(g => g.id === selected)?.incoming || 0);
   $('district-trend').innerHTML = `<path d="${chartPath(values, 120, 45)}" fill="none" stroke="var(--violet)" stroke-width="1.6"/><circle cx="${Math.round(current) / Math.max(1, values.length - 1) * 120}" cy="${45 - values[Math.round(current)] / Math.max(1, ...values) * 40}" r="3" fill="var(--violet)"/>`;
   const sourceModules = new Set(shortcuts.filter(e => snapshot().files[e.target]?.district === selected).map(e => snapshot().files[e.source]?.district)).size;
   $('district-meaning').textContent = d.incoming ? `${sourceModules} ${sourceModules === 1 ? 'district reaches' : 'districts reach'} past this gate. ${d.shortcuts} outgoing ${d.shortcuts === 1 ? 'shortcut' : 'shortcuts'} from ${d.outgoing} resolved imports.` : d.walled ? 'No other district reaches past this gate in this snapshot.' : 'This folder has no declared wall. Imports into it are not counted as shortcuts.';
+  if (Object.values(snapshot().files).some(f => f.district === selected && f.path.endsWith('.swift'))) $('district-meaning').textContent += ' Swift import and gate checks are unavailable; its type links are inferred.';
   const desire = desirePaths[0];
   $('desire-path').innerHTML = desire ? `<span class="file-chip">${escape(desire.target.split('/').slice(-2).join('/'))}</span><p><b>${desire.sources.length} importers across ${desire.districts.length} districts.</b><br>A repeated need might deserve a place in the public API.</p>` : '<p>No private file is reached by two or more distinct districts here.</p>';
   $('gate-detail').textContent = d.public.length ? 'Gate → ' + d.public.map(p => p.split('/').pop()).join(', ') : 'Declare gates in strata.config.json';
   $('evidence-list').innerHTML = shortcuts.slice(0, 25).map(e => `<p>${escape(e.source)}:${e.line}<br><span class="violet">↳ ${escape(e.target)}</span></p>`).join('') || '<p>No detected shortcuts.</p>';
   if (shortcuts.length > 25) $('evidence-list').insertAdjacentHTML('beforeend', `<p>Showing 25 of ${shortcuts.length}. Full evidence is in the city JSON.</p>`);
+  const references = (snapshot().inferredReferences || []).filter(e => snapshot().files[e.source]?.district === selected || snapshot().files[e.target]?.district === selected);
+  if (references.length) $('evidence-list').insertAdjacentHTML('beforeend', `<p><b>${references.length} inferred Swift type links</b><br>Type-name matches guide layout; build targets and compiler resolution are not checked. Showing up to 25.</p>${references.slice(0, 25).map(e => `<p>${escape(e.source)}:${e.line}<br>↳ ${escape(e.target)}</p>`).join('')}`);
 }
 function renderMinimap() {
   const { w, d } = city.bounds; const scale = Math.min(145 / w, 105 / d);
-  $('minimap').innerHTML = [...city.lots.values()].map(l => `<polygon data-district="${escape(l.id)}" points="${l.hull.map(p => `${(p[0] + w / 2) * scale + 2},${(p[1] + d / 2) * scale + 2}`).join(' ')}" fill="${l.id === selected ? 'var(--violet)' : l.walled ? '#adbba5' : '#d0d7c8'}" opacity="${l.id === selected ? 1 : .65}"/>`).join('');
+  $('minimap').innerHTML = [...city.lots.values()].map(l => `<polygon data-district="${escape(l.id)}" points="${l.hull.map(p => `${(p[0] + w / 2) * scale + 2},${(p[1] + d / 2) * scale + 2}`).join(' ')}" fill="${l.id === selected ? 'var(--violet)' : districtStyles.get(l.id).color}" opacity="${l.id === selected ? 1 : .65}"/>`).join('');
   for (const rect of $('minimap').querySelectorAll('polygon')) rect.onclick = () => select(rect.dataset.district, true);
 }
 function select(id, focus = false) {
@@ -79,6 +87,7 @@ function update(index, followTimeline = false) {
   $('scrubber').value = current; $('chart-cursor').style.left = `${current / Math.max(1, data.snapshots.length - 1) * 100}%`;
   if (old !== Math.round(current) || !$('current-date').textContent) {
     const s = snapshot(); city.setSnapshot(current); $('file-count').textContent = number(Object.keys(s.files).length); $('line-count').textContent = number(Object.values(s.files).reduce((n, f) => n + f.lines, 0));
+    $('swift-coverage').hidden = !Object.keys(s.files).some(path => path.endsWith('.swift'));
     $('repo-entropy').innerHTML = entropyCard(s.entropy);
     $('shortcut-badge').textContent = s.shortcuts.length; $('current-date').textContent = date(s.date);
     renderDistrictList(); renderInspector();
@@ -153,6 +162,9 @@ async function init() {
     else { const response = await fetch('./city.json'); if (!response.ok) throw new Error('No city data found. Run strata scan first.'); data = await response.json(); }
     status.local = Boolean(localCity);
     if (data.schemaVersion !== 1 || !data.snapshots?.length) throw new Error('Unsupported or empty city data.');
+    districtStyles = districtPresentation(data);
+    const languages = [...new Map([...districtStyles.values()].map(style => [style.language, style])).values()];
+    $('language-legend').innerHTML = languages.map(style => `<span title="${escape(style.title)}"><i style="background:${style.color}"></i>${escape(({typescript:'TS',javascript:'JS',python:'Py',swift:'Swift',mixed:'Mixed'})[style.language])}</span>`).join('');
     current = data.snapshots.length - 1;
     $('repo-name').textContent = data.meta.name; $('repo-privacy').textContent = data.meta.private ? 'Private workspace' : 'Public sample';
     city = new City($('viewport'), data, { select, selectFile, hover, frame });

@@ -145,13 +145,16 @@ def evaluate(payload):
     # With the same file paths, import resolution and inferred gates are stable.
     # Only changed importers can introduce a new edge. Additions/deletions/moves
     # need a full analysis because unchanged imports may resolve differently.
-    importers = {p for p in sources if sources[p] != proposed[p]} if sources.keys() == proposed.keys() else None
+    changed = {p for p in sources.keys() | proposed.keys() if sources.get(p) != proposed.get(p)}
+    importers = changed if sources.keys() == proposed.keys() else None
     before = analyze(sources, config, importers=importers)
     after = analyze(proposed, config, importers=importers)
     old = {(e['source'], e['target']) for e in before['shortcuts']}
     added = [e for e in after['shortcuts'] if (e['source'], e['target']) not in old]
     if added:
         return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', 'permissionDecisionReason': reason(added)}}
+    if not after['warnings'] and any(p.endswith('.swift') for p in changed):
+        after['warnings'].append('Swift import and boundary checks are unavailable; inferred type references are for layout only.')
     if after['warnings']:
         return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'additionalContext': 'Strata could not fully check this edit: ' + '; '.join(after['warnings'][:8]) + '. Run strata check after the edit.'}}
     return {}

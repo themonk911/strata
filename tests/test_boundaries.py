@@ -188,6 +188,18 @@ class BoundaryPolicy(unittest.TestCase):
             self.save(preview)
         self.assertFalse((self.root / 'strata.config.json').exists())
 
+    def test_swift_gate_coverage_is_incomplete_and_cannot_be_saved(self):
+        self.write('Models/Record.swift', 'struct Record {}\n')
+        self.write('Views/Screen.swift', 'let record: Record? = nil\n')
+        preview = self.preview([{'path': 'Models', 'public': []}])
+        self.assertTrue(any('Swift' in warning and 'unavailable' in warning for warning in preview['warnings']))
+        self.assertEqual(preview['shortcuts'], [])
+        with self.assertRaisesRegex(ValueError, 'incomplete analysis'):
+            self.save(preview)
+        self.assertFalse((self.root / 'strata.config.json').exists())
+        # Native source does not prevent declaring supported Python gates.
+        self.assertTrue(self.save(self.preview())['saved'])
+
     def test_invalid_json_and_config_symlink_are_not_overwritten(self):
         self.write('strata.config.json', '{broken')
         with self.assertRaisesRegex(ValueError, 'not valid JSON'):

@@ -61,6 +61,15 @@ class RepositoryHistory(unittest.TestCase):
         sampled = self.scan(maximum=2)
         self.assertEqual([s['revision'] for s in sampled['snapshots']], [revisions[0][:12], revisions[-1][:12]])
 
+    def test_check_keeps_baseline_parse_failure_after_working_tree_is_repaired(self):
+        self.write('app.py', 'def broken(')
+        self.commit()
+        self.write('app.py', 'value = 1\n')
+        self.assertTrue(check(self.repo, {})['warnings'])
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'core/scan.py'),
+                                 'check', '--repo', str(self.repo)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+
     def test_snapshot_budget_retains_endpoints_and_reports_sampling(self):
         for i in range(4):
             self.write('a.py', 'value = %d\n' % i)

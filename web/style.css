@@ -57,7 +57,7 @@ button:hover:not(:disabled) { filter: none; }
 main { height: calc(100svh - 74px); }
 .left-panel { top: 37px; left: 29px; width: 192px; bottom: 27px; }
 .eyebrow { letter-spacing: 1.25px; font-size: 9px; line-height: 1.6; }
-h1 { font-size: 59px; line-height: 1; letter-spacing: -2.6px; margin: 19px 0 15px; }
+h1 { font-size: 48px; line-height: 1; letter-spacing: -1.8px; margin: 19px 0 15px; max-width: 100%; }
 .subtitle { font-size: 11px; line-height: 1.8; margin-bottom: 19px; }
 .repo-tag { font-size: 8px; letter-spacing: .55px; gap: 6px; }
 .repo-tag .status-dot { width: 4px; height: 4px; }
@@ -154,7 +154,7 @@ dialog p { font-size: 12px; }
   .connection { display: none; }
   .beta { display: none; }
   .left-panel { width: 158px; left: 21px; }
-  h1 { font-size: 49px; }
+  h1 { font-size: 40px; }
   .overview { gap: 21px; }
   .overview strong { font-size: 25px; }
   .inspector { right: 18px; width: 252px; padding: 20px; }
@@ -179,7 +179,7 @@ dialog p { font-size: 12px; }
   main { height: calc(100svh - 64px); }
   .left-panel { top: 28px; left: 19px; width: 140px; bottom: 320px; }
   .left-panel .eyebrow { font-size: 6px; }
-  h1 { font-size: 43px; margin: 13px 0 7px; }
+  h1 { font-size: 35px; margin: 13px 0 7px; }
   .district-list { max-height: 150px; min-height: 0; margin-top: 14px; }
   .district-button { padding: 8px 7px; font-size: 9px; background: color-mix(in srgb, var(--panel) 82%, transparent); }
   .district-button .count { font-size: 8px; }
@@ -218,7 +218,7 @@ dialog p { font-size: 12px; }
   .film-button-arrow { display: none; }
   .portrait-button > span:first-child { font-size: 21px; }
   .left-panel { width: 125px; top: 25px; }
-  h1 { font-size: 38px; }
+  h1 { font-size: 31px; }
   .view-controls { top: 26px; right: 14px; }
   .view-controls button { font-size: 8px; padding: 7px 8px; }
   .view-controls span { font-size: 7px; }
@@ -239,7 +239,7 @@ dialog p { font-size: 12px; }
 }
 @media (max-height: 730px) and (min-width: 851px) {
   .left-panel { top: 25px; }
-  h1 { margin-top: 13px; font-size: 48px; }
+  h1 { margin-top: 13px; }
   .subtitle { margin-bottom: 13px; }
   .overview { margin: 21px 0; }
   .left-bottom { gap: 10px; margin-top: 13px; }
@@ -341,3 +341,6 @@ dialog p { font-size: 12px; }
 /* Measured entropy is a panel/chart, separate from the activity colour layer. */
 .entropy-card{padding:14px 0;border-bottom:1px solid var(--line);margin:4px 0 12px}.entropy-heading{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--ink)}.entropy-version{font:7px var(--mono);letter-spacing:.8px;color:var(--muted)}.entropy-score{display:flex;align-items:baseline;gap:10px;margin-top:3px}.entropy-score strong{font:36px Georgia,serif;font-weight:400;letter-spacing:-1px}.entropy-score>span{font:10px var(--mono);color:var(--muted)}.entropy-details summary{font-size:10px;color:var(--muted);cursor:pointer;margin-top:6px}.entropy-details p{font-size:10px;line-height:1.6;color:var(--muted);margin:12px 0 0}.entropy-signal{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:12px;font-size:11px}.entropy-signal b{font:10px var(--mono)}.entropy-track{height:3px;grid-column:1/-1;background:var(--line)}.entropy-track i{height:3px;display:block;background:var(--ink)}.entropy-signal small{grid-column:1/-1;color:var(--muted);font-size:9px}.compact-entropy .entropy-score strong{font-size:28px}.compact-entropy{padding:10px 0;margin-bottom:6px}#history-signal{border:0;background:transparent;color:var(--ink);font:10px var(--mono);cursor:pointer;padding:0 10px 0 0}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:850px){.left-panel #repo-entropy{position:fixed;right:20px;top:76px;border:0;margin:0;padding:0;background:var(--paper);border-radius:8px;padding:8px 12px}.left-panel #repo-entropy .entropy-details{display:none}.left-panel #repo-entropy .entropy-version{margin-left:15px}.left-panel #repo-entropy .entropy-score strong{font-size:28px}.compact-entropy{display:none}}
 .touring .left-panel{visibility:hidden}.tour-panel{position:absolute;z-index:8;left:24px;top:28px;bottom:166px;width:244px;overflow:auto;background:var(--panel);padding:20px;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.tour-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.tour-panel h2{font:30px/1.12 Georgia,serif;letter-spacing:-.8px;margin:0 0 18px;overflow-wrap:anywhere}.tour-caption{font-size:13px;line-height:1.7;color:var(--muted)}.tour-content{margin:20px 0}.tour-content p{font-size:12px;line-height:1.6;color:var(--muted);margin:12px 0}.tour-content strong{color:var(--ink)}.tour-nav{display:flex;gap:10px}.tour-nav button{padding:10px 12px;font-size:11px;white-space:nowrap}.tour-hint{font-size:10px;line-height:1.6;color:var(--muted);margin:18px 0}.tour-steps{border-top:1px solid var(--line);padding-top:14px;display:grid;gap:4px}.tour-steps button{border:0;background:transparent;text-align:left;font:10px var(--mono);color:var(--muted);padding:8px 0}.tour-steps button.active{color:var(--ink);font-weight:700}.tour-finding{width:100%;display:flex;justify-content:space-between;border:0;border-bottom:1px solid var(--line);padding:12px 0;background:none;color:var(--ink);text-align:left;font-size:12px}.tour-finding b{color:var(--violet);font:11px var(--mono)}.tour-score{font:32px Georgia,serif}.tour-nav button:disabled{opacity:.35}@media(max-width:850px){.tour-panel{left:14px;top:auto;bottom:130px;width:calc(100% - 28px);max-height:35vh;padding:16px}.tour-panel h2{font-size:24px;margin-bottom:8px}.tour-steps,.tour-hint{display:none}.tour-content{margin:10px 0}.tour-header{margin-bottom:5px}.touring .inspector{visibility:hidden}}
+.language-legend{display:flex;flex-wrap:wrap;gap:8px;margin:-3px 0 12px;font:9px var(--mono);color:var(--muted)}
+.language-legend span{display:inline-flex;align-items:center;gap:4px}.language-legend i{width:6px;height:6px;border-radius:50%}
+#swift-coverage{font-size:10px;line-height:1.4;margin:0 0 16px}

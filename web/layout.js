@@ -9,7 +9,9 @@ export function createLayout(data) {
   const fileMap = new Map(files.map(f => [f.path, f]));
   const groups = new Map();
   for (const f of files) { if (!groups.has(f.district)) groups.set(f.district, []); groups.get(f.district).push(f); }
-  const imports = data.snapshots.at(-1).imports;
+  const latest = data.snapshots.at(-1);
+  // Inferred Swift relationships influence placement, never shortcut arcs.
+  const imports = [...latest.imports, ...(latest.inferredReferences || [])];
   const lots = [...groups].sort(([a], [b]) => Number(Boolean(modules.get(b)?.walled)) - Number(Boolean(modules.get(a)?.walled)) || a.localeCompare(b)).map(([id, members], index) => {
     const walled = Boolean(modules.get(id)?.walled);
     const nodes = members.map(f => ({ id: f.path, gate: f.gate }));

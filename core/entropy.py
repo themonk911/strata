@@ -118,6 +118,17 @@ def aggregate(rework, scatter, shortcuts):
     return {'version': VERSION, 'score': sum(s['score'] for s in signals.values()) / 3 if complete else None,
             'status': 'partial' if complete and partial else 'complete' if complete else 'incomplete', 'signals': signals}
 
+def _shortcut_coverage(result, district, measured):
+    paths = [path for path, file in result['files'].items() if district is None or file['district'] == district]
+    if not any(path.endswith('.swift') for path in paths):
+        return measured
+    if all(path.endswith('.swift') for path in paths):
+        return {**measured, 'value': None, 'rawRatio': None, 'status': 'unsupported_language',
+                'reason': 'Swift import and boundary checks are unavailable; inferred references are not measured imports.'}
+    reason = 'Swift files are excluded from import and boundary measurements.'
+    return {**measured, 'coverage': 'partial',
+            'reason': (measured.get('reason', '') + ' ' + reason).strip()}
+
 def sampled_values(result, config):
     """Expose snapshot facts without pretending to have replayed full history."""
     params = settings(config)
@@ -132,7 +143,7 @@ def sampled_values(result, config):
                           rawRatio=shortcuts / imports if imports else 0.0, imports=imports, shortcuts=shortcuts,
                           recentShortcuts=None, premium=params['shortcutPremium'], premiumApplied=False,
                           windowDays=params['shortcutDays'])
-        return aggregate(missing(), missing(), observed)
+        return aggregate(missing(), missing(), _shortcut_coverage(result, district, observed))
     return {'repo': values(), 'districts': {district['id']: values(district['id']) for district in result['districts']}}
 
 def scatter_change(line_counts, owners, module_count):
@@ -211,8 +222,9 @@ class EntropyTracker:
         shortcuts = [edge for edge in result['shortcuts'] if selected(edge)]
         recent = sum(1 for edge in shortcuts if 0 <= timestamp - self.first_seen[(edge['source'], edge['target'])] < self.params['shortcutDays'] * DAY)
         weighted = len(shortcuts) + recent * (self.params['shortcutPremium'] - 1)
-        return signal(weighted / imports if imports else 0.0, 'available', imports=imports, shortcuts=len(shortcuts), recentShortcuts=recent,
-                      weightedShortcuts=weighted, windowDays=self.params['shortcutDays'], premium=self.params['shortcutPremium'])
+        measured = signal(weighted / imports if imports else 0.0, 'available', imports=imports, shortcuts=len(shortcuts), recentShortcuts=recent,
+                          weightedShortcuts=weighted, windowDays=self.params['shortcutDays'], premium=self.params['shortcutPremium'])
+        return _shortcut_coverage(result, district, measured)
 
     def values(self, timestamp):
         districts = [district['id'] for district in self.latest['districts']]

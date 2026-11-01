@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createLayout } from './layout.js';
+import { districtPresentation } from './districts.js';
 
 const C = { paper: '#f4f3ee', land: '#efeee7', lot: '#e1e6d8', wall: '#a9b99c', building: '#a8b9a4', violet: '#8460c4', heat: '#d49b65' };
 const hash = str => [...str].reduce((v, c) => (v * 31 + c.charCodeAt(0)) >>> 0, 7);
@@ -8,6 +9,7 @@ const height = lines => lines ? Math.min(13, .35 + Math.sqrt(lines) * .205) : .0
 export class City {
   constructor(element, data, callbacks) {
     this.element = element; this.data = data; this.callbacks = callbacks; this.mode = 'city'; this.selected = null; this.snapshot = data.snapshots.length - 1;
+    this.districtStyles = districtPresentation(data);
     this.scene = new THREE.Scene(); this.scene.background = new THREE.Color(C.paper);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -74,7 +76,7 @@ export class City {
       lot.hull.forEach((p, i) => i ? shape.lineTo(p[0], -p[1]) : shape.moveTo(p[0], -p[1])); shape.closePath();
       const geometry = new THREE.ExtrudeGeometry(shape, { depth: .25, bevelEnabled: true, bevelSize: .12, bevelThickness: .06, bevelSegments: 2, steps: 1 });
       geometry.rotateX(-Math.PI / 2);
-      lot.baseColor = new THREE.Color(C.lot).multiplyScalar(.97 + (hash(lot.id) % 7) / 100);
+      lot.baseColor = new THREE.Color(this.districtStyles.get(lot.id).lot).multiplyScalar(.97 + (hash(lot.id) % 7) / 100);
       lot.mesh = new THREE.Mesh(geometry, this.materialFor(lot.baseColor)); lot.mesh.position.y = -.25; lot.mesh.receiveShadow = true; lot.mesh.userData.district = lot.id; this.scene.add(lot.mesh);
       lot.wallGroup = new THREE.Group(); this.scene.add(lot.wallGroup);
       for (let i = 0; i < lot.hull.length; i++) {
@@ -96,8 +98,9 @@ export class City {
   }
   addLabel(lot) {
     const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 80;
-    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#485a45'; ctx.font = '500 29px -apple-system, sans-serif'; ctx.textAlign = 'center';
-    const name = lot.id.split('/').pop().replaceAll('_', ' '); ctx.fillText(name, 256, 43, 490);
+    const name = this.districtStyles.get(lot.id).label;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#485a45'; ctx.font = `500 ${name.length > 22 ? 22 : name.length > 14 ? 25 : 29}px -apple-system, sans-serif`; ctx.textAlign = 'center';
+    ctx.fillText(name, 256, 43, 490);
     const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
     const darkCanvas = document.createElement('canvas'); darkCanvas.width = 512; darkCanvas.height = 80;
     const darkInk = darkCanvas.getContext('2d'); darkInk.fillStyle = '#bac8b0'; darkInk.font = ctx.font; darkInk.textAlign = 'center'; darkInk.fillText(name, 256, 43, 490);
@@ -160,6 +163,7 @@ export class City {
       if (immediate) this.currentHeights[i] = this.targetHeights[i];
       const age = live ? Math.max(0, snapshot.timestamp - (live.changed || 0)) / 86400 : 999;
       const color = new THREE.Color(this.dark ? '#7e9182' : C.building);
+      color.lerp(new THREE.Color(this.districtStyles.get(f.district).color), .38);
       color.multiplyScalar(.91 + (hash(f.path) % 20) / 100);
       if (live?.gate) color.set(this.dark ? '#aac4a5' : '#e0e9d8');
       if (age < 8 && this.mode !== 'shortcuts') color.lerp(new THREE.Color(C.heat), Math.max(0, 1 - age / 8) * (this.mode === 'activity' ? .95 : .58));
@@ -171,7 +175,7 @@ export class City {
     this.buildings.instanceColor.needsUpdate = true;
     for (const lot of this.lots.values()) {
       lot.mesh.visible = this.snapshot >= lot.firstSeen; lot.wallGroup.visible = lot.mesh.visible;
-      lot.mesh.material.color.copy(this.dark ? new THREE.Color('#384b3e') : lot.baseColor);
+      lot.mesh.material.color.copy(this.dark ? new THREE.Color(this.districtStyles.get(lot.id).darkLot) : lot.baseColor);
       if (lot.id === this.selected) lot.mesh.material.color.lerp(new THREE.Color(this.dark ? '#73628f' : '#d8cdeb'), .33);
     }
     this.makeArcs(snapshot); this.makeActivity(snapshot);

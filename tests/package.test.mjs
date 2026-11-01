@@ -18,7 +18,7 @@ function run(command, args, cwd) {
   return result.stdout;
 }
 
-test('standalone plugin scans and checks TypeScript without installed dependencies', async t => {
+test('standalone plugin scans TypeScript and Swift without installed dependencies', async t => {
   const temporary = await mkdtemp(join(tmpdir(), 'strata-package-test-'));
   t.after(() => rm(temporary, { recursive: true, force: true }));
   const plugin = join(temporary, 'plugin');
@@ -36,6 +36,8 @@ test('standalone plugin scans and checks TypeScript without installed dependenci
     'src/billing/private.ts': 'export const charge = () => 1;\n',
     'src/orders/index.ts': "export { submit } from './main.js';\n",
     'src/orders/main.ts': "import { charge } from '../billing/private.js';\nexport const submit = charge;\n",
+    'ios/Models/Record.swift': 'struct Record {}\n',
+    'ios/Views/Screen.swift': 'let record: Record? = nil\n',
   };
   for (const [path, content] of Object.entries(files)) {
     await mkdir(dirname(join(repo, path)), { recursive: true });
@@ -48,11 +50,17 @@ test('standalone plugin scans and checks TypeScript without installed dependenci
   run(process.execPath, [cli, 'scan', '--repo', repo, '--working', '--out', output], temporary);
   const city = JSON.parse(await readFile(output, 'utf8'));
   assert.equal(city.snapshots.length, 2);
+  assert.deepEqual(city.snapshots.at(-1).inferredReferences, [
+    { source: 'ios/Views/Screen.swift', target: 'ios/Models/Record.swift', line: 1, kind: 'swift_type_reference', inferred: true },
+  ]);
   assert.deepEqual(city.snapshots.at(-1).shortcuts, [
     { source: 'src/orders/main.ts', target: 'src/billing/private.ts', line: 1 },
   ]);
   await writeFile(join(repo, 'src/orders/main.ts'), "import { charge } from '../billing/index.js';\nexport const submit = charge;\n");
-  const checked = JSON.parse(run(process.execPath, [cli, 'check', '--repo', repo], temporary));
+  const result = spawnSync(process.execPath, [cli, 'check', '--repo', repo], { cwd: temporary, encoding: 'utf8' });
+  assert.equal(result.status, 2, 'Swift boundary coverage must not look like a passed check');
+  const checked = JSON.parse(result.stdout);
+  assert.match(checked.warnings.join(' '), /Swift.*unavailable/);
   assert.equal(checked.before, 1);
   assert.equal(checked.after, 0);
   assert.equal(checked.added.length, 0);

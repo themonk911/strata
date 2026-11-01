@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLayout } from '../web/layout.js';
 const data = { files: Array.from({length:18}, (_, i) => ({path:`src/m${i % 3}/f${i}.ts`, district:`src/m${i % 3}`, gate:i < 3})), snapshots:[{districts:[0,1,2].map(i=>({id:`src/m${i}`,walled:true})),imports:[]}] };
+data.snapshots[0].inferredReferences = [{source: data.files[0].path, target: data.files[1].path, kind:'swift_type_reference', inferred:true}];
 test('organic layout is deterministic and places every file', () => {
   const a = createLayout(data), b = createLayout(data);
   assert.equal(a.positions.size, 18);

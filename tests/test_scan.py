@@ -54,6 +54,17 @@ class Boundaries(unittest.TestCase):
         imports, _ = self.imports('src/a.ts', 'import { b } from "./b.js";', {'src/a.ts', 'src/b.ts'}, {})
         self.assertEqual(imports, [('src/b.ts', 1)])
 
+    def test_explicit_runtime_extensions_select_matching_typescript_sources(self):
+        paths = {'src/a.ts'} | {'src/b' + extension for extension in ('.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs')}
+        for runtime, source in (('.js', '.ts'), ('.jsx', '.tsx'), ('.mjs', '.mts'), ('.cjs', '.cts')):
+            with self.subTest(runtime=runtime):
+                text = 'import "./b%s";' % runtime
+                self.assertEqual(self.imports('src/a.ts', text, paths, {})[0], [('src/b' + source, 1)])
+                if runtime in ('.mjs', '.cjs'):
+                    without_source = paths - {'src/b' + source}
+                    self.assertEqual(self.imports('src/a.ts', text, without_source, {})[0], [('src/b' + runtime, 1)])
+                    self.assertEqual(self.imports('src/a.ts', text, without_source - {'src/b' + runtime}, {})[0], [])
+
     def test_typescript_multiline_import_and_comment(self):
         text = '// import { fake } from "./fake";\nimport {\n b,\n} from "./b";\nconst s = "import nope from \'./fake\'";'
         imports, _ = self.imports('src/a.ts', text, {'src/a.ts', 'src/b.ts', 'src/fake.ts'}, {})
@@ -79,7 +90,7 @@ class Boundaries(unittest.TestCase):
         self.assertEqual(len(analyze(files, {})['shortcuts']), 1)
 
     def test_shallow_javascript_package_import_uses_gate_and_private_import_is_flagged(self):
-        for extension in ('ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs'):
+        for extension in ('ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs'):
             with self.subTest(extension=extension):
                 gate, private = 'src/billing/index.' + extension, 'src/billing/core.' + extension
                 source = 'src/orders/run.js'
@@ -96,7 +107,9 @@ class Boundaries(unittest.TestCase):
         files['src/billing/core.js'] = ''
         files['src/orders/run.js'] = 'import "../billing/index.js";\nimport "../billing/index.ts";'
         result = analyze(files, {})
-        self.assertEqual({e['target'] for e in result['imports']}, set(gates))
+        # Explicit .js imports select the adjacent TypeScript source; both
+        # entry-point files still remain inferred public gates below.
+        self.assertEqual({e['target'] for e in result['imports']}, {'src/billing/index.ts'})
         self.assertEqual(result['shortcuts'], [])
         district = next(d for d in result['districts'] if d['id'] == 'src/billing')
         self.assertEqual(district['public'], gates)

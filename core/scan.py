@@ -14,9 +14,14 @@ import re
 import subprocess
 import sys
 
-CODE = re.compile(r'\.(py|ts|tsx|js|jsx|mjs|cjs)$')
-SKIP = re.compile(r'(^|/)(node_modules|dist|build|vendor|\.git|\.venv|\.agents|\.codex)(/|$)|\.d\.ts$')
-TEST = re.compile(r'(^|/)(tests?|__tests__|__smoke__)/|(^|/)test_[^/]+\.py$|\.(test|spec)\.[^.]+$')
+if __package__:
+    from .swift import swift_references
+else:
+    from swift import swift_references
+
+CODE = re.compile(r'\.(py|ts|tsx|mts|cts|js|jsx|mjs|cjs|swift)$')
+SKIP = re.compile(r'(^|/)(node_modules|dist|build|vendor|\.git|\.venv|\.agents|\.codex)(/|$)|\.d\.[cm]?ts$')
+TEST = re.compile(r'(^|/)(tests?|__tests__|__smoke__)/|(^|/)test_[^/]+\.py$|\.(test|spec)\.[^.]+$|(^|/)[^/]*Tests/|Tests\.swift$')
 JS_CACHE = {}
 PY_IMPORT_CACHE = {}
 
@@ -54,7 +59,7 @@ def infer_modules(paths, roots=('', 'src')):
     modules = {}
     counts = collections.Counter(parent.as_posix() for p in paths for parent in PurePosixPath(p).parents)
     for p in sorted(paths):
-        if not p.endswith(('/__init__.py', '/index.ts', '/index.tsx', '/index.js', '/index.jsx', '/index.mjs', '/index.cjs')):
+        if not p.endswith(('/__init__.py', '/index.ts', '/index.tsx', '/index.mts', '/index.cts', '/index.js', '/index.jsx', '/index.mjs', '/index.cjs')):
             continue
         folder = p.rsplit('/', 1)[0]
         if TEST.search(p):
@@ -123,7 +128,7 @@ def extract_imports(p, text, paths, config, parsed_js=None):
                     hit = child or base
                     if hit:
                         out.append((hit, n.lineno))
-    else:
+    elif not p.endswith('.swift'):
         parsed_js = parsed_js if parsed_js is not None else parse_js_sources({p: text})[p]
         if parsed_js['invalid']:
             warnings.append('JavaScript/TypeScript syntax could not be fully parsed: ' + p)
@@ -136,10 +141,14 @@ def extract_imports(p, text, paths, config, parsed_js=None):
                 if not alias:
                     continue
                 base = aliases[alias] + spec[len(alias):]
-            bases = [base]
-            if base.endswith(('.js', '.mjs', '.jsx')):
-                bases.append(base.rsplit('.', 1)[0])
-            hit = next((b + ext for b in bases for ext in ('', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '/index.ts', '/index.tsx', '/index.js', '/index.jsx', '/index.mjs', '/index.cjs') if b + ext in paths), None)
+            substitutions = {'.js': ('.ts', '.tsx', '.js', '.jsx'), '.jsx': ('.tsx', '.ts', '.jsx', '.js'),
+                             '.mjs': ('.mts', '.mjs'), '.cjs': ('.cts', '.cjs')}
+            extensions = substitutions.get(PurePosixPath(base).suffix)
+            if extensions:
+                candidates = [base.rsplit('.', 1)[0] + extension for extension in extensions]
+            else:
+                candidates = [base + extension for extension in ('', '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '/index.ts', '/index.tsx', '/index.mts', '/index.cts', '/index.js', '/index.jsx', '/index.mjs', '/index.cjs')]
+            hit = next((candidate for candidate in candidates if candidate in paths), None)
             if hit:
                 out.append((hit, line))
     return sorted(set((target, line) for target, line in out if target != p)), warnings
@@ -155,7 +164,15 @@ def analyze(sources, config, modules=None, importers=None, import_cache=None):
         f['gate'] = bool(mod and any(fnmatch.fnmatchcase(p, pattern) for pattern in mod.get('public', [])))
     edges, shortcuts, warnings = [], [], []
     selected = sources if importers is None else {p: text for p, text in sources.items() if p in importers}
-    parsed_js = parse_js_sources({p: text for p, text in selected.items() if not p.endswith('.py') and (import_cache is None or p not in import_cache)})
+    parsed_js = parse_js_sources({p: text for p, text in selected.items() if not p.endswith(('.py', '.swift')) and (import_cache is None or p not in import_cache)})
+    # Swift names are heuristic relationships, never resolved imports or gates.
+    # Resolve against every current declaration, even for unchanged importers.
+    references, swift_warnings = swift_references({p: text for p, text in sources.items() if p.endswith('.swift')}, importers)
+    warnings.extend(swift_warnings)
+    swift_modules = sorted({file['district'] for path, file in files.items()
+                            if path.endswith('.swift') and file['district'] in module_map})
+    if swift_modules:
+        warnings.append('Swift import and boundary checks are unavailable for modules: ' + ', '.join(swift_modules) + '.')
     for p, text in selected.items():
         if import_cache is not None and p in import_cache:
             imports, failed = import_cache[p]
@@ -191,7 +208,8 @@ def analyze(sources, config, modules=None, importers=None, import_cache=None):
     desires = [{'target': p, 'sources': sorted(set(src)), 'districts': sorted({files[s]['district'] for s in src})}
                for p, src in targets.items() if len({files[s]['district'] for s in src}) >= 2]
     desires.sort(key=lambda d: (-len(d['districts']), -len(d['sources']), d['target']))
-    return {'files': files, 'districts': districts, 'imports': edges, 'shortcuts': shortcuts, 'desirePaths': desires, 'warnings': warnings}
+    return {'files': files, 'districts': districts, 'imports': edges, 'inferredReferences': references,
+            'shortcuts': shortcuts, 'desirePaths': desires, 'warnings': warnings}
 
 class Repository:
     def __init__(self, path):
@@ -267,7 +285,7 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000, histor
     working_sources = repo.working() if working or head is None else None
     modules = config.get('modules', infer_modules(set(head_sources) | set(working_sources or {}), config.get('pythonRoots', ('', 'src'))))
     head_result = analyze(head_sources, config, modules)
-    records_per_snapshot = max(1, len(head_result['files']) + len(head_result['imports']))
+    records_per_snapshot = max(1, len(head_result['files']) + len(head_result['imports']) + len(head_result['inferredReferences']))
     budget_limit = max(2, maximum_records // records_per_snapshot - (working_sources is not None))
     limit = min(maximum, budget_limit)
     sampled = commits
@@ -357,7 +375,7 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000, histor
                 'limitedByRecordBudget': budget_limit < min(maximum, len(commits))}
     return {'schemaVersion': 1, 'meta': {'name': config.get('name', repo.path.name), 'private': config.get('private', True),
             'revision': head, 'entropy': entropy_meta, 'sampling': sampling, 'gatePolicy': 'declared' if 'modules' in config and not any(m.get('inferred') for m in modules) else 'inferred from current package entry points',
-            'coverage': 'Python and TypeScript ASTs. Static import strings are resolved locally; computed paths, external packages and runtime resolution may be missed.',
+            'coverage': 'Python and JS/TS imports use ASTs. Swift files contribute size, activity, rework, scatter and change diffs; type-name references are inferred for layout only, not resolved imports or gate checks. Swift build targets, type checking, macros and conditional compilation are not resolved. Computed imports, external packages and runtime resolution may be missed.',
             'limitations': ['Boundary pressure is not a validated entropy or defect predictor.',
                            'Current gate definitions are applied to all snapshots; past intent is not inferred.',
                            'Heat means changed since the previous sampled snapshot, not exact edit time.',
@@ -373,10 +391,12 @@ def check(repo, config, base='HEAD'):
     after = analyze(after_sources, config, modules)
     key = lambda e: (e['source'], e['target'])
     old, new = {key(e) for e in before['shortcuts']}, {key(e) for e in after['shortcuts']}
+    if any(p.endswith('.swift') for p in before_sources.keys() | after_sources.keys()):
+        after['warnings'].append('Swift import and boundary checks are unavailable; inferred type references are for layout only.')
     return {'base': base, 'before': len(old), 'after': len(new),
             'added': [e for e in after['shortcuts'] if key(e) not in old],
             'removed': [e for e in before['shortcuts'] if key(e) not in new],
-            'warnings': after['warnings']}
+            'warnings': sorted(set(before['warnings'] + after['warnings']))}
 
 def main():
     ap = argparse.ArgumentParser(description='Strata: a read-only city of your git history.')
@@ -401,7 +421,7 @@ def main():
     if args.command == 'check':
         result = check(args.repo, config, args.base)
         print(json.dumps(result, indent=2))
-        return 1 if result['added'] else 0
+        return 2 if result['warnings'] else 1 if result['added'] else 0
     if args.command == 'explain':
         result = analyze(Repository(args.repo).working(), config)
         if args.module:
