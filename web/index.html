@@ -14,6 +14,8 @@
       <h1 id="repo-name">Your city</h1>
       <p class="subtitle">A place for every file.<br>A story in every change.</p>
       <div class="repo-tag"><span class="status-dot"></span><span id="repo-privacy">Local repository</span></div>
+      <button id="edit-boundaries" class="boundary-launch" hidden>Edit boundaries <span aria-hidden="true">↗</span></button>
+      <section id="repo-entropy" class="entropy-card" aria-label="Repository entropy"></section>
       <div class="overview"><div><strong id="file-count">—</strong><span>buildings</span></div><div><strong id="line-count">—</strong><span>lines of code</span></div></div>
       <div class="section-label"><span>DISTRICTS</span><span id="district-count"></span></div>
       <label class="search"><span>⌕</span><input id="search" type="search" placeholder="Find a district…" aria-label="Find a district"></label>
@@ -27,6 +29,7 @@
       <div class="district-heading"><h2 id="district-title">Select a district</h2><button id="focus" class="icon-button" title="Focus selected district" aria-label="Focus selected district">⌖</button></div>
       <p id="district-path" class="code muted"></p>
       <div id="gate-badge" class="gate-badge">Package boundary</div>
+      <section id="district-entropy" class="entropy-card compact-entropy" aria-label="Selected district entropy"></section>
       <div class="pressure"><div><span class="small-label">SHORTCUTS INTO THIS DISTRICT</span><strong id="incoming">—</strong></div><svg id="district-trend" viewBox="0 0 120 50" aria-label="Shortcut history"></svg></div>
       <p id="district-meaning" class="meaning">Choose a district to inspect its boundaries.</p>
       <div class="divider"></div>
@@ -41,7 +44,7 @@
     <div class="legend"><span><i class="key building-key"></i>File</span><span><i class="key heat-key"></i>Recent change</span><span><i class="key shortcut-key"></i>Shortcut</span><span><i class="ring-key"></i>Desire path</span></div>
     <div class="map-wrap"><span class="small-label">CITY PLAN</span><svg id="minimap" viewBox="0 0 150 110" role="img" aria-label="District minimap"></svg></div>
     <section class="timeline" aria-label="Git history timeline">
-      <div class="timeline-top"><div class="timeline-heading"><span class="status-dot"></span><span id="timeline-label">THE SHAPE OF CHANGE</span></div><span id="current-date" class="code"></span><div class="play-controls"><button id="play" class="play-button" aria-label="Play history">▶</button><button id="speed" class="speed-button" aria-label="Playback speed">1×</button></div></div>
+      <div class="timeline-top"><div class="timeline-heading"><label for="history-signal" class="sr-only">History measure</label><select id="history-signal"><option value="entropy">Entropy</option><option value="rework">Rework</option><option value="scatter">Scatter</option><option value="shortcuts">Shortcut count</option></select><span id="timeline-label">OVER TIME</span></div><span id="current-date" class="code"></span><div class="play-controls"><button id="play" class="play-button" aria-label="Play history">▶</button><button id="speed" class="speed-button" aria-label="Playback speed">1×</button></div></div>
       <div class="chart-wrap"><svg id="history-chart" viewBox="0 0 800 38" preserveAspectRatio="none" aria-label="Shortcut count over history"></svg><div id="chart-cursor"></div><input type="range" id="scrubber" min="0" max="0" value="0" step="0.01" aria-label="History snapshot"></div>
       <div class="timeline-bottom"><span id="first-date"></span><span id="timeline-note">DRAG TO EXPLORE · SHORTCUTS THROUGH TIME</span><span id="last-date"></span></div>
     </section>

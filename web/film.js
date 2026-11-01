@@ -117,7 +117,7 @@ export function openFilm(data, { api, pollJob, local, busy }) {
   enrich.onclick = () => work(async () => {
     running = false; play.textContent = 'Play film'; message.textContent = 'Astra is reading the shape of your history…';
     const job = await pollJob(await api('story', {}), j => { if (!disposed) message.textContent = j.activity || 'Writing the storyboard…'; });
-    if (disposed) return; story = job.story; seconds = 0; lastChapter = -1; writeTranscript(); message.textContent = 'Story by Astra · medium. All numbers are drawn from your scan.';
+    if (disposed) return; story = job.story; seconds = 0; lastChapter = -1; writeTranscript(); message.textContent = 'Story by Astra · medium. Captions explain the history; chart values and counts come from your scan.';
   });
   illustrate.onclick = () => work(async () => {
     running = false; play.textContent = 'Play film'; seconds = 36; draw();

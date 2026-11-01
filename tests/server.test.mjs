@@ -85,6 +85,20 @@ test('local server enforces host, origin, routes, and JSON input before actions'
   assert.equal((await request(port, '/api/city', { headers: { Host: 'attacker.example' } })).status, 403);
   assert.equal((await request(port, '/api/city', { headers: { Origin: 'https://attacker.example' } })).status, 403);
   assert.equal((await request(port, '/api/city', { headers: { Origin: 'http://localhost:' + port } })).status, 200);
+  for (const path of ['/api/boundaries/preview', '/api/boundaries/save']) {
+    const post = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' };
+    assert.equal((await request(port, path, { ...post, headers: { ...post.headers, Host: 'attacker.example' } })).status, 403);
+    assert.equal((await request(port, path, { ...post, headers: { ...post.headers, Origin: 'https://attacker.example' } })).status, 403);
+    const nonJson = await request(port, path, { method: 'POST', body: '{}' });
+    assert.equal(nonJson.status, 400);
+    assert.match(nonJson.content, /application\/json/);
+    const invalidRules = await request(port, path, { ...post, body: '{"modules":[],"revision":"test","repo":"/tmp/untrusted"}' });
+    assert.equal(invalidRules.status, 400);
+    assert.match(invalidRules.content, /current revision only/);
+  }
+  const noWorkspace = await request(port, '/api/boundaries');
+  assert.equal(noWorkspace.status, 400);
+  assert.match(noWorkspace.content, /STRATA_REPO/);
   for (const path of ['/.env.local', '/server/index.mjs', '/%2e%2e/.env.local', '/generated/../../.env.local']) {
     const response = await request(port, path);
     assert.equal(response.status, 404, path);

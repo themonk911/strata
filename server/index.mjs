@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { CodexClient } from './codex.mjs';
+import { BoundaryEditor } from './boundaries.mjs';
 import { decide, decisionCacheKey } from './decisions.mjs';
 import { STORY_MODEL, STORY_EFFORT, storyEvidence, storyCacheKey, storySchema, storyPrompt, validateStory } from './story.mjs';
 
@@ -17,6 +18,7 @@ const port = Number(process.env.PORT || 4317);
 const codex = new CodexClient({ cwd: join(local, 'agent-work') });
 const jobs = new Map();
 let activeJob = false;
+const boundaries = new BoundaryEditor({ workspace: configuredWorkspace, workspaceFile: join(local, 'workspace.json'), busy: () => activeJob, externalConfigOverride: Boolean(process.env.STRATA_CONFIG) });
 let apiCalls = 0;
 let apiInFlight = false;
 const dataFile = resolve(process.env.STRATA_DATA || join(local, 'city.json'));
@@ -25,10 +27,13 @@ function datasetIdentity(data) {
   return { hash: createHash('sha256').update(JSON.stringify(data)).digest('hex'),
     name: data.meta.name, revision: data.meta.revision, private: data.meta.private !== false };
 }
-async function workspace() {
+async function configuredWorkspace() {
   const saved = existsSync(join(local, 'workspace.json')) ? JSON.parse(await readFile(join(local, 'workspace.json'), 'utf8')) : {};
-  return { repo: process.env.STRATA_REPO || saved.repo, config: process.env.STRATA_CONFIG || saved.config };
+  const repo = process.env.STRATA_REPO || saved.repo;
+  const sameWorkspace = !process.env.STRATA_REPO || (saved.repo && resolve(saved.repo) === resolve(repo));
+  return { repo, config: process.env.STRATA_CONFIG || (sameWorkspace ? saved.config : undefined) };
 }
+const workspace = () => boundaries.workspace();
 function loadKey() {
   if (existsSync(join(root, '.env.local'))) process.loadEnvFile(join(root, '.env.local'));
   return process.env.OPENAI_API_KEY;
@@ -50,7 +55,7 @@ function factsFor(data, input) {
     gatePolicy: data.meta.gatePolicy, caveat: 'Static import facts only; no source semantics or causal evidence. Boundary definitions may be inferred.' };
 }
 async function beginJob(kind, facts, screenshot, dataset) {
-  if (activeJob) throw new Error('A Codex request is already running. Let it finish first.');
+  if (activeJob || boundaries.active) throw new Error('A local request is already running. Let it finish first.');
   activeJob = true;
   const id = randomUUID();
   const job = { id, kind, status: 'running', activity: 'Connecting to your Codex login…', text: '', startedAt: Date.now(), dataset };
@@ -107,7 +112,7 @@ async function beginStory(data) {
     const job = { id, kind: 'story', status: 'done', activity: 'Storyboard ready', story, cached: true };
     jobs.set(id, job); return job;
   } catch { /* Missing or incomplete cache: generate again. */ }
-  if (activeJob) throw new Error('A Codex request is already running. Let it finish first.');
+  if (activeJob || boundaries.active) throw new Error('A local request is already running. Let it finish first.');
   activeJob = true;
   const job = { id, kind: 'story', status: 'running', activity: 'Astra is reading the shape of your history…', startedAt: Date.now() };
   jobs.set(id, job);
@@ -151,26 +156,29 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     const path = new URL(req.url, 'http://localhost').pathname;
     if (req.method === 'GET' && path === '/api/city') return json(res, 200, await readCity());
+    if (req.method === 'GET' && path === '/api/boundaries') return json(res, 200, await boundaries.read());
+    if (req.method === 'POST' && path === '/api/boundaries/preview') return json(res, 200, await boundaries.preview(await body(req)));
+    if (req.method === 'POST' && path === '/api/boundaries/save') return json(res, 200, await boundaries.save(await body(req)));
     if (req.method === 'GET' && path === '/api/portraits') return json(res, 200, await portraits(await readCity()));
     if (req.method === 'POST' && path === '/api/story') { await body(req); return json(res, 202, await beginStory(await readCity())); }
     if (req.method === 'GET' && path === '/api/status') {
       let status; try { status = await codex.status(); } catch { status = { signedIn: false, imageGeneration: false }; }
-      return json(res, 200, { ...status, decisions: Boolean(loadKey()), apiCalls, local: true, rescan: Boolean((await workspace()).repo) });
+      return json(res, 200, { ...status, decisions: Boolean(loadKey()), apiCalls, local: true, rescan: Boolean((await workspace()).repo), boundaries: await boundaries.available() });
     }
     if (req.method === 'GET' && path.startsWith('/api/jobs/')) {
       const job = jobs.get(path.split('/').pop()); return json(res, job ? 200 : 404, job || { error: 'Unknown job.' });
     }
     if (req.method === 'POST' && path === '/api/rescan') {
       await body(req);
-      if (activeJob) throw new Error('Let the current Codex or scan request finish first.');
       const target = await workspace();
       if (!target.repo) throw new Error('Set STRATA_REPO to the local repository path before starting Strata.');
+      if (activeJob || boundaries.active) throw new Error('Let the current local request finish first.');
       activeJob = true;
       const id = randomUUID(), job = { id, kind: 'scan', status: 'running', activity: 'Reading git history…' }; jobs.set(id, job);
       const args = [join(root, 'core/scan.py'), '--repo', target.repo, '--out', dataFile, '--working'];
       if (target.config) args.push('--config', target.config);
       const child = spawn(process.env.PYTHON || 'python3', args, { cwd: root, stdio: ['ignore', 'ignore', 'pipe'] });
-      const timeout = setTimeout(() => child.kill(), 180000);
+      const timeout = setTimeout(() => child.kill(), 600000);
       child.stderr.on('data', bytes => { const line = bytes.toString().trim().split('\n').at(-1); if (line.startsWith('Scanning ')) job.activity = line; });
       child.on('error', () => { clearTimeout(timeout); job.status = 'error'; job.error = 'Could not start the scanner. Check Python and git installation.'; activeJob = false; });
       child.on('exit', code => { clearTimeout(timeout); job.status = code === 0 ? 'done' : 'error'; job.activity = 'Scan complete'; if (code !== 0) job.error = 'Scan failed or timed out. Run the CLI for diagnostics.'; activeJob = false; });
@@ -201,4 +209,4 @@ const server = http.createServer(async (req, res) => {
   } catch (error) { json(res, 400, { error: error.code === 'ENOENT' ? 'Run the scanner and npm run build first.' : error.message }); }
 });
 server.listen(port, '127.0.0.1', () => console.log(`Strata: http://127.0.0.1:${port}`));
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { codex.close(); server.close(); process.exit(0); });
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { boundaries.close(); codex.close(); server.close(); process.exit(0); });

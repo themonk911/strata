@@ -257,3 +257,95 @@ dialog p { font-size: 12px; }
 @media (prefers-reduced-motion: reduce) {
   .film-launch:hover:not(:disabled),.play-button:hover { transform: none; }
 }
+
+/* Boundary policy is edited locally, separately from the historical city. */
+.boundary-launch { margin-top: 14px; align-self: flex-start; display: flex; align-items: center; gap: 17px; border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 9px 11px; font-size: 10px; }
+.boundary-launch[hidden] { display: none; }
+.boundary-launch:hover { background: var(--violet-soft); border-color: var(--violet); }
+.boundary-launch span { color: var(--violet); }
+.boundary-dialog { width: min(940px, 94vw); padding: 34px 38px 26px; }
+.boundary-dialog .boundary-intro { max-width: 710px; margin-bottom: 20px; }
+.boundary-dialog h2 { font-size: 36px; }
+.boundary-dialog h3 { font-size: 13px; font-weight: 600; margin: 0; }
+.boundary-dialog button:disabled { cursor: not-allowed; }
+.boundary-dialog [hidden] { display: none !important; }
+.boundary-notice { font-size: 12px; line-height: 1.6; padding: 12px 14px; border: 1px solid var(--line); border-radius: 7px; background: color-mix(in srgb, var(--green) 5%, var(--paper)); margin-bottom: 20px; overflow-wrap: anywhere; }
+.boundary-notice.boundary-error,.boundary-warning { border-color: color-mix(in srgb, var(--warm) 50%, var(--line)); background: color-mix(in srgb, var(--warm) 10%, var(--paper)); }
+.boundary-notice.boundary-success { border-color: var(--green); }
+.boundary-config { border: 1px solid var(--line); border-left: 3px solid var(--violet); border-radius: 7px; padding: 15px 17px; margin-bottom: 16px; font-size: 12px; }
+.boundary-config dl { display: grid; grid-template-columns: auto 1fr; gap: 7px 13px; margin: 12px 0; font-size: 10px; }
+.boundary-config dt { color: var(--muted); }
+.boundary-config dd { margin: 0; overflow-wrap: anywhere; }
+.boundary-config code { font: 10px/1.6 var(--mono); }
+.boundary-config p { max-width: none; margin: 0; font-size: 11px; }
+.boundary-import-consent { display: flex; align-items: start; gap: 9px; padding: 15px; margin-top: 20px; background: var(--violet-soft); border-radius: 7px; font-size: 12px; line-height: 1.6; cursor: pointer; }
+.boundary-import-consent input { margin: 3px 0 0; accent-color: var(--violet); }
+.boundary-workspace-warning { border: 1px solid var(--warm); padding: 14px 16px; border-radius: 7px; font-size: 11px; max-width: none; }
+.boundary-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.boundary-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; }
+.boundary-section-heading h3 span { font: 10px var(--mono); color: var(--muted); margin-left: 6px; }
+.boundary-dialog .boundary-help { font-size: 11px; line-height: 1.7; margin: 8px 0 16px; max-width: none; }
+.boundary-modules { display: flex; flex-direction: column; gap: 10px; }
+.boundary-module { display: grid; grid-template-columns: minmax(120px, .9fr) minmax(180px, 1.35fr) auto; gap: 13px; align-items: start; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+.boundary-module label { display: block; font-size: 10px; color: var(--muted); margin-bottom: 8px; }
+.boundary-module input,.boundary-module textarea { display: block; width: 100%; min-width: 0; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 5px; padding: 10px; font: 11px/1.6 var(--mono); }
+.boundary-module textarea { resize: vertical; min-height: 57px; }
+.boundary-module textarea:focus-visible { outline: 2px solid var(--violet); outline-offset: 4px; }
+.boundary-remove { margin-top: 24px; border: 0; background: none; color: var(--muted); padding: 10px 0 10px 4px; font-size: 10px; }
+.boundary-remove:hover { color: var(--ink); }
+.boundary-dialog .boundary-empty { padding: 19px; margin: 0; max-width: none; border: 1px dashed var(--line); border-radius: 8px; }
+.boundary-add { margin-top: 12px; }
+.boundary-suggestions { border-top: 1px solid var(--line); margin-top: 21px; padding-top: 16px; font-size: 11px; }
+.boundary-suggestions summary,.boundary-evidence summary { cursor: pointer; font-size: 11px; line-height: 1.5; }
+.boundary-suggestions summary span { color: var(--muted); font: 10px var(--mono); margin-left: 5px; }
+.boundary-suggestions > p { font-size: 11px; max-width: none; }
+.boundary-suggestion { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.boundary-suggestion > div { min-width: 0; }
+.boundary-suggestion code { font: 11px var(--mono); overflow-wrap: anywhere; }
+.boundary-suggestion span { display: block; font: 10px/1.6 var(--mono); margin-top: 5px; color: var(--muted); overflow-wrap: anywhere; }
+.boundary-suggestion button { flex-shrink: 0; }
+.boundary-preview { margin-top: 27px; padding-top: 23px; border-top: 1px solid var(--line); }
+.boundary-scope { font: 9px var(--mono); color: var(--muted); }
+.boundary-counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 16px; }
+.boundary-counts > div { border: 1px solid var(--line); background: var(--panel); padding: 16px; border-radius: 8px; }
+.boundary-counts strong { display: block; font: 31px/1 Georgia,serif; color: var(--violet); margin-bottom: 8px; }
+.boundary-counts span { font-size: 10px; color: var(--muted); }
+.boundary-warning { padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--warm) 50%, var(--line)); border-radius: 8px; font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; margin-bottom: 16px; }
+.boundary-warning ul { padding-left: 17px; margin-bottom: 0; }
+.boundary-evidence { border-top: 1px solid var(--line); padding-top: 13px; margin-top: 14px; }
+.boundary-imports { list-style: none; padding: 0; margin: 11px 0 0; max-height: 300px; overflow-y: auto; }
+.boundary-imports li { display: flex; align-items: start; justify-content: space-between; gap: 10px; padding: 12px 0; border-top: 1px solid var(--line); }
+.boundary-imports li > div { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; }
+.boundary-imports code { font: 10px/1.7 var(--mono); overflow-wrap: anywhere; }
+.boundary-imports code:last-child { color: var(--violet); }
+.boundary-imports li > div > span { color: var(--muted); }
+.boundary-new { flex-shrink: 0; background: var(--violet-soft); color: var(--violet); font-size: 8px; padding: 5px 6px; border-radius: 4px; }
+.boundary-footer { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 25px; }
+.boundary-footer p { max-width: 460px; font-size: 10px; line-height: 1.7; margin: 0; }
+.boundary-footer code { font-size: 9px; }
+.boundary-actions { display: flex; gap: 9px; flex-shrink: 0; flex-wrap: wrap; }
+.boundary-actions .primary,.boundary-actions .secondary-button { padding: 12px 14px; font-size: 11px; justify-content: center; }
+@media (max-width: 850px) {
+  .boundary-launch { font-size: 9px; padding: 8px 9px; margin-top: 8px; gap: 10px; }
+  .boundary-dialog { padding: 30px 24px 24px; }
+  .boundary-footer { flex-direction: column; align-items: stretch; gap: 14px; }
+  .boundary-footer p { max-width: none; }
+  .boundary-actions { justify-content: flex-end; }
+}
+@media (max-width: 520px) {
+  .boundary-dialog { width: 96vw; max-height: 96svh; padding: 30px 18px 20px; }
+  .boundary-dialog h2 { font-size: 30px; }
+  .boundary-module { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 13px; }
+  .boundary-module-path { grid-column: 1; }
+  .boundary-module-gates { grid-column: 1 / -1; grid-row: 2; }
+  .boundary-remove { grid-column: 2; grid-row: 1; }
+  .boundary-counts { gap: 6px; }
+  .boundary-counts > div { padding: 12px 10px; }
+  .boundary-counts strong { font-size: 27px; }
+  .boundary-counts span { font-size: 9px; }
+  .boundary-section-heading { align-items: baseline; }
+  .boundary-section-heading .text-button { font-size: 9px; }
+  .boundary-imports li { flex-direction: column; gap: 6px; }
+}
+/* Measured entropy is a panel/chart, separate from the activity colour layer. */
+.entropy-card{padding:14px 0;border-bottom:1px solid var(--line);margin:4px 0 12px}.entropy-heading{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--ink)}.entropy-version{font:7px var(--mono);letter-spacing:.8px;color:var(--muted)}.entropy-score{display:flex;align-items:baseline;gap:10px;margin-top:3px}.entropy-score strong{font:36px Georgia,serif;font-weight:400;letter-spacing:-1px}.entropy-score>span{font:10px var(--mono);color:var(--muted)}.entropy-details summary{font-size:10px;color:var(--muted);cursor:pointer;margin-top:6px}.entropy-details p{font-size:10px;line-height:1.6;color:var(--muted);margin:12px 0 0}.entropy-signal{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:12px;font-size:11px}.entropy-signal b{font:10px var(--mono)}.entropy-track{height:3px;grid-column:1/-1;background:var(--line)}.entropy-track i{height:3px;display:block;background:var(--ink)}.entropy-signal small{grid-column:1/-1;color:var(--muted);font-size:9px}.compact-entropy .entropy-score strong{font-size:28px}.compact-entropy{padding:10px 0;margin-bottom:6px}#history-signal{border:0;background:transparent;color:var(--ink);font:10px var(--mono);cursor:pointer;padding:0 10px 0 0}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:850px){.left-panel #repo-entropy{position:fixed;right:20px;top:76px;border:0;margin:0;padding:0;background:var(--paper);border-radius:8px;padding:8px 12px}.left-panel #repo-entropy .entropy-details{display:none}.left-panel #repo-entropy .entropy-version{margin-left:15px}.left-panel #repo-entropy .entropy-score strong{font-size:28px}.compact-entropy{display:none}}

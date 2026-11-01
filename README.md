@@ -35,6 +35,14 @@ The fixture uses illustrative dates to make its history easy to explore.
 
 ## Declare module gates
 
+In the local app, choose **Edit boundaries** below the repository name. Add a module directory and its public entry points (one repository-relative path or glob per line), then **Preview imports** to see the current working tree's violations, including newly flagged and resolved imports. Inferred boundaries are suggestions that you can explicitly add to the draft. An empty gate list makes a module private; removing a module removes its declared boundary.
+
+**Save rules** writes `strata.config.json` in the repository and refreshes the city. Other config settings are preserved. The editor requires a fresh preview, rejects incomplete analysis, and asks you to reload if the config changed elsewhere. If source files change after preview, preview again before saving. Existing violations can be saved as architectural debt: hooks still block newly introduced shortcuts, not unchanged existing imports.
+
+When the workspace uses an external config, the editor offers an explicit import into the repository's `strata.config.json`. The external file stays untouched; existing repository settings are preserved, with external settings filling missing fields. The current city switches to the saved repository rules. If you launched with an external `STRATA_CONFIG` override, remove that override on your next launch to continue using the repository rules.
+
+Trusted Strata hooks read the saved rules on their next check; the editor does not install or trust hooks. Boundary editing is local-only, supports saving on macOS and Linux, and does not require a Codex login. Static exports remain read-only. You can also edit the same config directly:
+
 ```json
 {
   "name": "my-project",
@@ -51,7 +59,7 @@ The fixture uses illustrative dates to make its history easy to explore.
 
 Paths are repository-relative. Public paths and adapter exceptions accept glob patterns. Tests are exempt. Without declarations, package entry points are inferred and visibly labeled as hypotheses. Confirm those boundaries before treating a shortcut as something to fix.
 
-Inference recognizes packages such as `billing/` and `src/billing/` when they contain an entry point and another source file. Python absolute imports search the repository root and `src` by default; set `pythonRoots` for other layouts. Relative Python imports stay within the importing file's package. JavaScript aliases require explicit configuration. Source folders such as `data/` are included; dependency, build, and tool-state folders remain excluded.
+Inference recognizes outer packages such as `billing/` and `src/billing/` when they contain an entry point and another source file. Nested subpackages belong to that outer module instead of creating additional walls. `src` and configured Python roots are source containers; declare narrower boundaries when they match your architecture. Python absolute imports search the repository root and `src` by default; set `pythonRoots` for other layouts. Relative Python imports stay within the importing file's package. JavaScript aliases require explicit configuration. Source folders such as `data/` are included; dependency, build, and tool-state folders remain excluded.
 
 ```sh
 node bin/strata.mjs explain --repo /path/to/repo --module src/billing
@@ -62,6 +70,14 @@ node bin/strata.mjs scan --repo /path/to/repo --working --out .local/city.json
 `check` exits 1 for newly added shortcuts and 2 if analysis fails. Existing shortcuts are reported but do not fail a change. In a repository without commits, `check` compares the working tree with an empty baseline, and `scan` shows the working tree.
 
 `scan` samples first-parent commits, including multiple commits on the same day, and keeps the first and latest commits. It uses up to 70 historical snapshots by default; `--max-snapshots` accepts 2–366. For larger repositories, a budget of 100,000 file/import records reduces the sample count. Adjust it with `--max-snapshot-records`. This is an estimate based on HEAD, not a hard byte limit. `--working` adds a current snapshot, and deleted files retain their plots in the layout.
+
+Ordinary scans and the local **Rescan** button analyze only the sampled commits. The timeline shows the sampled count and whether the record budget reduced it; `meta.sampling` records the limits on every scan. Full-history rework, scatter, and shortcut-age calculations are optional because they replay every first-parent commit:
+
+```sh
+node bin/strata.mjs scan --repo /path/to/repo --history-analysis --working --out .local/city.json
+```
+
+Large full-history runs can take several minutes; run them from the CLI. Without this flag, historical signals remain unavailable, and the breakdown labels the current unweighted shortcut ratio separately. A normal rescan returns to sampled mode.
 
 ## Codex and Decisions
 
@@ -97,11 +113,29 @@ Strata dogfoods declared gates for its own `core`, `server`, and `web` modules. 
 - Warmth means change since the preceding sampled snapshot. Activity dots trace actual commits, not asserted agent identities.
 - The film’s **boundary pressure** is shortcuts divided by all resolved imports, including imports inside a district. It normalizes the shortcut count for import growth; it is not a validated entropy or defect score.
 
+## Experimental entropy index
+
+Strata includes **entropy v2** (`strata-entropy-v2`), an optional experimental 0–1 summary of three observable signals. Enable it with `--history-analysis` and open its breakdown to inspect the raw measurements and coverage. It has not been validated as a predictor of bugs, code quality, or maintenance cost.
+
+| Signal | Default measurement | Normalization anchor |
+| --- | --- | --- |
+| Rework | Of nonblank lines introduced at least 14 days ago, the fraction removed within 14 days of introduction. This uses cumulative mature cohorts, excluding the initial baseline and uncommitted edits. | 30% |
+| Scatter | How widely each committed change spreads changed lines across source modules: normalized Shannon entropy, averaged equally across changes in the last 30 days. | 1.0 |
+| Shortcuts | Live shortcuts divided by all resolved imports. Newly observed shortcuts count twice for 14 days, then once. | 10% |
+
+Each signal is divided by its fixed anchor and capped at 1; the index is their **equal-weight mean**. The 30% rework and 10% shortcut anchors are uncalibrated display saturation choices; scatter 1.0 is the mathematical maximum of normalized Shannon entropy. The data records this rationale in `meta.entropy.anchorBasis`. These choices are not learned or validated quality thresholds. The unweighted boundary-pressure chart remains a separate measure.
+
+Rework matches equal lines after removing whitespace, preserving reorders and exact moves within one commit. It does not recognize arbitrary semantic rewrites, line splitting/joining, or moves spread across commits; identical duplicate lines are ambiguous. First-parent commits represent integration events, not proof of reviewed pull requests.
+
+**Partial coverage is explicit.** Unassigned test lines are excluded from scatter, with their paths, counts, and the attributable fraction reported. Changes with no attributable lines are excluded rather than scored as zero. District rework uses its known cohorts; unassigned cohorts still contribute to repository rework. A numeric composite based on partial coverage is labeled **Partial** in the app.
+
+**Missing signals stay missing.** No attributable changes, immature history, shallow history, unreliable timestamps, or sampled mode can make a signal unavailable. The combined index is then incomplete, rather than treating the missing signal as zero or averaging only the available ones. Tests with one defensible production owner can be declared in `entropy.testOwners`, mapping repository-relative test paths or globs to module paths. Keep genuinely mixed integration tests unassigned. Window lengths and the shortcut premium can be configured under `entropy`; the score breakdown records the settings used.
+
 ## Limitations
 
 Python and JS/TS imports use ASTs. Resolution covers local static paths, configured Python roots, and configured JS aliases. Computed imports, external packages, runtime path changes, and some language-specific resolution rules are outside this version’s coverage. Gate definitions from the current config apply to the whole window; the city does not infer historical design intent. Large scans still load sampled file and import data into browser memory; reduce the sampling budget when needed.
 
-**There is no validated composite entropy score.** Import boundaries are observable signals. Decisions recommendations and generated illustrations are labeled as interpretation. Rework survival analysis, causal validation, reversals, and leftover-code detection are outside this release.
+The experimental entropy index and import boundaries are descriptive signals. Decisions recommendations and generated illustrations are labeled as interpretation. Semantic rework tracking, causal validation, change coupling, reversals, and leftover-code detection are outside this release.
 
 The Codex sandbox restricts writes, not filesystem reads. Instructions to avoid credentials and unrelated files are model guidance, not an enforced read allowlist. Hooks are advisory integration checks, not a security boundary; installation and trust remain under Codex's controls. Included-plan image generation has been verified, but its exact Image 2.5 backend has not. Decisions request and response handling are tested offline against the documented contract; ordinary tests do not verify live account access or consume API credits.
 

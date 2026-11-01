@@ -1,8 +1,10 @@
 import { City } from './city.js';
 import { openFilm } from './film.js';
+import { openBoundaries } from './boundaries.js';
+import { entropyCard, metricHistory, historyPath } from './entropy.js';
+import { escape } from './html.js';
 
 const $ = id => document.getElementById(id);
-const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const number = n => new Intl.NumberFormat('en-GB', { notation: n > 99999 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(n);
 const date = value => value === 'Working tree' ? value : new Date(value + 'T12:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 let data, city, selected, current = 0, playing = false, speed = 1, lastTick = 0, status = {}, toastTimer, activeJob = null;
@@ -16,11 +18,17 @@ function chartPath(values, width, h) {
   const max = Math.max(1, ...values); return values.map((v, i) => `${i ? 'L' : 'M'}${i / Math.max(1, values.length - 1) * width},${h - v / max * (h - 5)}`).join(' ');
 }
 function renderTimeline() {
-  const values = data.snapshots.map(s => s.shortcuts.length);
-  const path = chartPath(values, 800, 36);
-  $('history-chart').innerHTML = `<path d="${path} L800,38 L0,38 Z" fill="var(--violet)" opacity=".09"/><path d="${path}" fill="none" stroke="var(--violet)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+  const metric = $('history-signal').value, values = metricHistory(data, metric), path = historyPath(values);
+  $('history-chart').innerHTML = `<path d="${path}" fill="none" stroke="${metric === 'shortcuts' ? 'var(--violet)' : 'var(--ink)'}" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+  $('history-chart').ariaLabel = metric + ' over history';
+  $('timeline-note').textContent = values.some(Number.isFinite) ? metric === 'shortcuts' ? 'RESOLVED IMPORTS INTO PRIVATE FILES' : 'FIXED SCALE 0–1 · GAPS MEAN INCOMPLETE DATA' : data.meta.entropy?.analysisMode === 'sampled' ? 'HISTORICAL METRICS OPTIONAL · RUN WITH --history-analysis' : 'NO COMPLETE VALUES YET · INSPECT SIGNAL COVERAGE';
   $('first-date').textContent = date(data.snapshots[0].date); $('last-date').textContent = date(data.snapshots.at(-1).date);
   $('scrubber').max = data.snapshots.length - 1; $('snapshot-count').textContent = `${data.snapshots.length} snapshots · ${data.changes.length.toLocaleString()} commits`;
+  const sampling = data.meta.sampling;
+  if (sampling) {
+    $('snapshot-count').textContent = `${sampling.historicalSnapshots} of ${sampling.availableCommits} commits${sampling.workingTreeIncluded ? ' + working tree' : ''}${sampling.limitedByRecordBudget ? ' · size-limited' : ''}`;
+    $('snapshot-count').title = `First-parent history. Up to ${sampling.maxSnapshots} snapshots, with an estimated budget of ${number(sampling.recordBudget)} file/import records.`;
+  }
 }
 function renderDistrictList() {
   const search = $('search').value.toLowerCase(); const s = snapshot();
@@ -35,6 +43,8 @@ function selectedFacts() {
 }
 function renderInspector() {
   const { district: d, shortcuts, desirePaths } = selectedFacts();
+  $('district-entropy').hidden = !d;
+  $('district-entropy').innerHTML = entropyCard(d?.entropy, 'District entropy');
   if (!d) { $('district-title').textContent = selected?.split('/').pop() || 'Choose a district'; $('district-meaning').textContent = 'This district does not exist at this point in history.'; $('incoming').textContent = '0'; $('desire-path').textContent = ''; $('gate-detail').textContent = ''; $('evidence-list').textContent = ''; return; }
   $('district-title').textContent = d.name.replaceAll('_', ' '); $('district-path').textContent = d.id;
   $('gate-badge').textContent = d.walled ? d.inferred ? 'Inferred gate · review the boundary' : 'Declared public gate' : 'Open neighborhood';
@@ -62,6 +72,7 @@ function update(index) {
   $('scrubber').value = current; $('chart-cursor').style.left = `${current / Math.max(1, data.snapshots.length - 1) * 100}%`;
   if (old !== Math.round(current) || !$('current-date').textContent) {
     const s = snapshot(); city.setSnapshot(current); $('file-count').textContent = number(Object.keys(s.files).length); $('line-count').textContent = number(Object.values(s.files).reduce((n, f) => n + f.lines, 0));
+    $('repo-entropy').innerHTML = entropyCard(s.entropy);
     $('shortcut-badge').textContent = s.shortcuts.length; $('current-date').textContent = date(s.date);
     renderDistrictList(); renderInspector();
   }
@@ -125,17 +136,20 @@ async function judge() {
   finally { $('judge').disabled = false; }
 }
 function showAbout() {
-  modal(`<div class="eyebrow modal-eyebrow">A FIELD GUIDE TO STRATA</div><h2>Your codebase has a landscape.</h2><p>Strata turns git history into a city you can explore, and gives coding agents the same boundary facts. Find a repeated shortcut, investigate the gate, make a focused repair, and rescan.</p><div class="about-grid"><div><h3>Buildings & districts</h3><p>A building is a source file. Its height grows with the square root of its line count. Deleted files leave an empty plot. Lots stay in the same place across history.</p></div><div><h3>Walls & violet arcs</h3><p>A gate is a module’s public entry point. An arc is a detected import into another module’s private file. Bundles separate into individual imports when you select a district.</p></div><div><h3>Heat & desire paths</h3><p>Warm buildings changed since the previous sampled snapshot. Rings mark private files imported by at least two other districts. Activity dots represent commits, not identified agents.</p></div><div><h3>Evidence & judgment</h3><p>Python and JS/TS imports use AST parsing; computed runtime imports remain outside coverage. Boundaries may be inferred. Decisions gives an advisory recommendation, and Codex explains what to investigate.</p></div></div><p class="code" style="font-size:10px">No composite entropy score is claimed. Gate definitions are applied consistently across history. ${escape(data.meta.coverage)}</p>`);
+  modal(`<div class="eyebrow modal-eyebrow">A FIELD GUIDE TO STRATA</div><h2>Your codebase has a landscape.</h2><p>Strata turns git history into a city you can explore, and gives coding agents the same boundary facts. Find a repeated shortcut, investigate the gate, make a focused repair, and rescan.</p><div class="about-grid"><div><h3>Buildings & districts</h3><p>A building is a source file. Its height grows with the square root of its line count. Deleted files leave an empty plot. Lots stay in the same place across history.</p></div><div><h3>Walls & violet arcs</h3><p>A gate is a module’s public entry point. An arc is a detected import into another module’s private file. Bundles separate into individual imports when you select a district.</p></div><div><h3>Heat & desire paths</h3><p>Warm buildings changed since the previous sampled snapshot. Rings mark private files imported by at least two other districts. Activity dots represent commits, not identified agents.</p></div><div><h3>Evidence & judgment</h3><p>Python and JS/TS imports use AST parsing; computed runtime imports remain outside coverage. Boundaries may be inferred. Decisions gives an advisory recommendation, and Codex explains what to investigate.</p></div></div><p class="code" style="font-size:10px">The optional experimental entropy index combines rework, scatter and shortcuts using uncalibrated scales. Partial coverage is labeled; missing signals leave it incomplete. Run strata scan --history-analysis for historical metrics. It has not been validated as a predictor of maintenance cost. Gate definitions are applied consistently across history. ${escape(data.meta.coverage)}</p>`);
 }
 async function init() {
   try {
     const local = await fetch('/api/city');
-    if (local.ok && local.headers.get('content-type')?.includes('application/json')) data = await local.json();
+    const localCity = local.ok && local.headers.get('content-type')?.includes('application/json');
+    if (localCity) data = await local.json();
     else { const response = await fetch('./city.json'); if (!response.ok) throw new Error('No city data found. Run strata scan first.'); data = await response.json(); }
     if (data.schemaVersion !== 1 || !data.snapshots?.length) throw new Error('Unsupported or empty city data.');
     current = data.snapshots.length - 1;
     $('repo-name').textContent = data.meta.name; $('repo-privacy').textContent = data.meta.private ? 'Private workspace' : 'Public sample';
     city = new City($('viewport'), data, { select, hover, frame });
+    if (!data.snapshots.some(s => Number.isFinite(s.entropy?.score))) $('history-signal').value = 'shortcuts';
+    if (!metricHistory(data, 'entropy').some(Number.isFinite) && metricHistory(data, 'rework').some(Number.isFinite)) $('history-signal').value = 'rework';
     renderTimeline();
     const ranked = [...snapshot().districts].sort((a, b) => b.incoming - a.incoming);
     select(ranked.find(d => d.walled)?.id || ranked[0]?.id); update(current);
@@ -146,6 +160,7 @@ async function init() {
     $('play').onclick = () => { if (!playing && current >= data.snapshots.length - 1) update(0); play(!playing); };
     $('speed').onclick = () => { speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; $('speed').textContent = speed + '×'; };
     $('search').oninput = renderDistrictList;
+    $('history-signal').onchange = renderTimeline;
     $('reset').onclick = () => city.reset(); $('focus').onclick = () => city.select(selected, true);
     $('theme').onclick = () => { const dark = document.body.classList.toggle('dark'); city.theme(dark); };
     $('about').onclick = showAbout; $('close-modal').onclick = () => $('modal').close();
@@ -153,6 +168,17 @@ async function init() {
     $('copy-task').onclick = async () => { try { await navigator.clipboard.writeText(repairTask()); toast('Repair task copied. Paste it into Codex.'); } catch { modal('<h2>Repair task</h2><pre style="white-space:pre-wrap">' + escape(repairTask()) + '</pre>'); } };
     $('postcard').onclick = illustrate; $('explain').onclick = explain; $('judge').onclick = judge;
     $('film').onclick = () => { play(false); openFilm(data, { api, pollJob, local: Boolean(status.local), busy: () => Boolean(activeJob) }); };
+    if (localCity) {
+      $('edit-boundaries').hidden = false;
+      $('edit-boundaries').onclick = () => {
+        if (activeJob) return toast('Let the current request finish first.');
+        play(false);
+        openBoundaries({ api, refreshCity: async onUpdate => {
+          const job = await api('rescan', {});
+          await pollJob(job, j => onUpdate(j.activity || 'Refreshing the city…'));
+        } });
+      };
+    }
     $('rescan').onclick = async () => {
       if (activeJob) return toast('Let the current request finish first.');
       $('rescan').disabled = true;

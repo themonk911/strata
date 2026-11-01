@@ -25,12 +25,55 @@ test('story cache responds to evidence changes and model is explicitly Astra med
   assert.equal(storyCacheKey(evidence), storyCacheKey(storyEvidence(data)));
   assert.notEqual(storyCacheKey(evidence), storyCacheKey({ ...evidence, private: false }));
   assert.equal(STORY_MODEL, 'gpt-6-astra'); assert.equal(STORY_EFFORT, 'medium');
-  assert.match(storyPrompt(evidence), /do not put counts, percentages, or dates in the prose/);
 });
 test('valid story carries measured evidence and declared generation settings', () => {
   const story = validateStory(JSON.stringify(storyboard()), data);
   assert.equal(story.model, 'gpt-6-astra'); assert.equal(story.effort, 'medium');
   assert.equal(story.chapters.length, 5); assert.equal(story.evidence.history.length, 2);
+});
+test('generated prose cannot invent figures, dates, or spell quantities around validation', () => {
+  const captions = [
+    'There are 999 shortcuts.', 'There are 2 files.', 'Pressure reached 50%.',
+    'There are ９９９ shortcuts.', 'There are ٩٩٩ shortcuts.', 'Pressure reached ½.',
+    'There are two shortcuts.', 'There are twenty-one modules.',
+    'There are 𝘵𝘸𝘰 shortcuts.', 'Imports doubled.', 'A quarter of imports bypass gates.',
+    'The third district needs review.', 'Growth peaked in September.', 'Growth peaked in May.',
+  ];
+  for (const caption of captions) {
+    const value = storyboard();
+    value.chapters[2].caption = caption;
+    assert.throws(() => validateStory(value, data), /qualitative prose/, caption);
+  }
+  for (const field of ['title', 'subtitle']) {
+    const value = storyboard(); value[field] = 'Two shortcuts';
+    assert.throws(() => validateStory(value, data), /qualitative prose/, field);
+  }
+  const value = storyboard(); value.chapters[2].title = '50% more code';
+  assert.throws(() => validateStory(value, data), /qualitative prose/);
+});
+test('exact numeric repository, district and code identifiers remain usable', () => {
+  const named = structuredClone(data);
+  named.meta.name = 'sample2';
+  for (const snapshot of named.snapshots) {
+    snapshot.files = { 'src/api2/client2.js': { lines: 10, district: 'src/api2' } };
+    snapshot.districts[0] = { ...snapshot.districts[0], id: 'src/api2', name: 'api2' };
+    snapshot.desirePaths = [{ target: 'src/api2/client2.js', sources: ['caller.js'], districts: ['caller'] }];
+  }
+  const value = storyboard();
+  value.title = 'sample2 / code history';
+  value.chapters[3].district = 'src/api2';
+  value.chapters[3].title = 'Review src/api2';
+  value.chapters[3].caption = 'Inspect api2/client2.js before extending api2.';
+  assert.equal(validateStory(value, named).chapters[3].caption, value.chapters[3].caption);
+  value.chapters[3].caption = 'Inspect src/api2/client2.js before extending api2.';
+  assert.equal(validateStory(value, named).chapters[3].caption, value.chapters[3].caption);
+  value.chapters[3].caption = 'Inspect api20 before extending the gate.';
+  assert.throws(() => validateStory(value, named), /qualitative prose/);
+});
+test('qualitative narration invalidates previous numeric-caption caches', () => {
+  const evidence = storyEvidence(data);
+  for (const version of [1, 3]) assert.notEqual(storyCacheKey(evidence), storyCacheKey({ ...evidence, version }));
+  assert.match(storyPrompt(evidence), /renderer owns all measured figures/);
 });
 test('story rejects hallucinated snapshot, district, metric fields and overlong text', () => {
   let value = storyboard(); value.chapters[2].snapshot = 99;

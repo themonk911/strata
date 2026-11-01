@@ -102,6 +102,32 @@ class Boundaries(unittest.TestCase):
         self.assertEqual(district['public'], gates)
         self.assertTrue(all(result['files'][gate]['gate'] for gate in gates))
 
+    def test_nested_packages_share_outer_boundary(self):
+        files = {
+            'src/billing/__init__.py': '',
+            'src/billing/internal/__init__.py': '',
+            'src/billing/internal/core.py': 'value = 1\n',
+            'src/billing/service.py': 'from .internal.core import value\n',
+            'src/orders/__init__.py': '',
+            'src/orders/run.py': 'from billing.internal.core import value\n',
+        }
+        result = analyze(files, {})
+        self.assertEqual({d['id'] for d in result['districts'] if d['walled']}, {'src/billing', 'src/orders'})
+        self.assertEqual(result['files']['src/billing/internal/core.py']['district'], 'src/billing')
+        self.assertEqual(result['shortcuts'], [{'source': 'src/orders/run.py', 'target': 'src/billing/internal/core.py', 'line': 1}])
+
+    def test_source_container_entrypoints_do_not_swallow_feature_boundaries(self):
+        for container, config in [('src', {}), ('python', {'pythonRoots': ['python']})]:
+            with self.subTest(container=container):
+                files = {container + '/__init__.py': '', container + '/billing/__init__.py': '',
+                         container + '/billing/private.py': 'value=1\n',
+                         container + '/orders/__init__.py': '',
+                         container + '/orders/run.py': 'from billing.private import value\n'}
+                result = analyze(files, config)
+                self.assertEqual({d['id'] for d in result['districts'] if d['walled']},
+                                 {container + '/billing', container + '/orders'})
+                self.assertEqual(len(result['shortcuts']), 1)
+
     def test_project_specific_source_folders_are_not_excluded(self):
         files = {folder + '/code.py': '' for folder in ('src/data', 'data_demo', 'app-state', 'codex-home')}
         files.update({'backend/app/services/__init__.py': '', 'backend/app/services/engine.py': '',

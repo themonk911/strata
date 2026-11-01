@@ -29,9 +29,9 @@ class RepositoryHistory(unittest.TestCase):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
 
-    def commit(self):
+    def commit(self, timestamp=None):
         self.git('add', '.')
-        timestamp = '2026-01-01T10:%02d:00+00:00' % self.commits
+        timestamp = timestamp or '2026-01-01T10:%02d:00+00:00' % self.commits
         env = {**os.environ, 'GIT_AUTHOR_DATE': timestamp, 'GIT_COMMITTER_DATE': timestamp}
         self.git('commit', '-qm', 'Private commit message', env=env)
         self.commits += 1
@@ -70,6 +70,47 @@ class RepositoryHistory(unittest.TestCase):
         self.assertEqual(len(data['snapshots']), 2)
         self.assertTrue(any('record budget' in warning for warning in data['meta']['warnings']))
         self.assertEqual(data['snapshots'][-1]['revision'], data['meta']['revision'][:12])
+        sampling = data['meta']['sampling']
+        self.assertEqual(sampling['recordBudget'], 6)
+        self.assertEqual(sampling['availableCommits'], 4)
+        self.assertEqual(sampling['historicalSnapshots'], 2)
+        self.assertTrue(sampling['limitedByRecordBudget'])
+
+    def test_sampling_metadata_is_present_when_no_limit_is_reached(self):
+        self.write('a.py', 'value=1\n')
+        self.commit()
+        result = self.scan(working=True)
+        sampling = result['meta']['sampling']
+        self.assertEqual(sampling['recordBudget'], 100000)
+        self.assertEqual(sampling['maxSnapshots'], 70)
+        self.assertEqual(sampling['availableCommits'], 1)
+        self.assertEqual(sampling['historicalSnapshots'], 1)
+        self.assertTrue(sampling['workingTreeIncluded'])
+        self.assertFalse(sampling['sampled'])
+        self.assertFalse(sampling['limitedByRecordBudget'])
+
+    def test_default_scan_skips_history_metrics_and_opt_in_replays_mature_cohorts(self):
+        self.write('base.py', 'baseline=1\n')
+        self.commit('2026-01-01T00:00:00+00:00')
+        self.write('new.py', 'candidate=1\n')
+        self.commit('2026-01-02T00:00:00+00:00')
+        (self.repo / 'new.py').unlink()
+        self.commit('2026-01-03T00:00:00+00:00')
+        self.write('base.py', 'baseline=1\nmaturity=1\n')
+        self.commit('2026-01-21T00:00:00+00:00')
+        default = self.scan(maximum=2)
+        self.assertEqual(default['meta']['entropy']['analysisMode'], 'sampled')
+        self.assertFalse(default['meta']['entropy']['historyAnalysis'])
+        self.assertEqual(default['meta']['entropy']['analyzedCommits'], 2)
+        signals = default['snapshots'][-1]['entropy']['signals']
+        self.assertTrue(all(s['value'] is None and s['score'] is None for s in signals.values()))
+        self.assertEqual(signals['rework']['status'], 'history_analysis_disabled')
+        self.assertEqual(signals['shortcuts']['rawRatio'], 0)
+        complete = self.scan(maximum=2, history_analysis=True)
+        self.assertTrue(complete['meta']['entropy']['historyAnalysis'])
+        self.assertEqual(complete['meta']['entropy']['analyzedCommits'], 4)
+        self.assertEqual(complete['snapshots'][-1]['entropy']['signals']['rework']['value'], 1)
+        self.assertEqual([s['revision'] for s in default['snapshots']], [s['revision'] for s in complete['snapshots']])
 
     def test_working_tree_heat_uses_content_and_preserves_unchanged_files(self):
         self.write('a.py', 'value = 1\n')

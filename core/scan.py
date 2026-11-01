@@ -18,6 +18,7 @@ CODE = re.compile(r'\.(py|ts|tsx|js|jsx|mjs|cjs)$')
 SKIP = re.compile(r'(^|/)(node_modules|dist|build|vendor|\.git|\.venv|\.agents|\.codex)(/|$)|\.d\.ts$')
 TEST = re.compile(r'(^|/)(tests?|__tests__|__smoke__)/|(^|/)test_[^/]+\.py$|\.(test|spec)\.[^.]+$')
 JS_CACHE = {}
+PY_IMPORT_CACHE = {}
 
 def parse_js_sources(sources):
     keys = {p: (PurePosixPath(p).suffix, hashlib.sha256(text.encode()).hexdigest()) for p, text in sources.items()}
@@ -48,8 +49,8 @@ def load_config(repo, explicit=None):
             raise ValueError('Module and public paths must be repository-relative.')
     return config
 
-def infer_modules(paths):
-    """Package entry points are hypotheses, visibly distinguished from declarations."""
+def infer_modules(paths, roots=('', 'src')):
+    """Infer outer package gates, leaving nested packages inside their owner."""
     modules = {}
     counts = collections.Counter(parent.as_posix() for p in paths for parent in PurePosixPath(p).parents)
     for p in sorted(paths):
@@ -58,10 +59,16 @@ def infer_modules(paths):
         folder = p.rsplit('/', 1)[0]
         if TEST.search(p):
             continue
+        # Source roots are containers, even when they have an entry point.
+        # Keep feature packages under src visible without walling every nested
+        # implementation package within a feature.
+        if folder in roots or PurePosixPath(folder).name == 'src':
+            continue
         if counts[folder] >= 2:
             module = modules.setdefault(folder, {'path': folder, 'public': [], 'inferred': True})
             module['public'].append(p)
-    return list(modules.values())
+    return [module for folder, module in modules.items()
+            if not any(parent.as_posix() in modules for parent in PurePosixPath(folder).parents)]
 
 def module_for(p, modules):
     matches = [m['path'] for m in modules if p == m['path'] or p.startswith(m['path'] + '/')]
@@ -85,11 +92,16 @@ def extract_imports(p, text, paths, config, parsed_js=None):
         package = p.split('/')[:-1]
         root = max((r for r in roots if r and p.startswith(r + '/')), key=len, default='')
         package_depth = len(package) - (len(root.split('/')) if root else 0)
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:
+        if text not in PY_IMPORT_CACHE:
+            if len(PY_IMPORT_CACHE) > 20000: PY_IMPORT_CACHE.clear()
+            try:
+                PY_IMPORT_CACHE[text] = [node for node in ast.walk(ast.parse(text)) if isinstance(node, (ast.Import, ast.ImportFrom))]
+            except SyntaxError:
+                PY_IMPORT_CACHE[text] = None
+        nodes = PY_IMPORT_CACHE[text]
+        if nodes is None:
             return [], ['Python syntax could not be parsed: ' + p]
-        for n in ast.walk(tree):
+        for n in nodes:
             if isinstance(n, ast.Import):
                 for alias in n.names:
                     hit = resolve_py(alias.name.split('.'), paths, roots)
@@ -132,10 +144,10 @@ def extract_imports(p, text, paths, config, parsed_js=None):
                 out.append((hit, line))
     return sorted(set((target, line) for target, line in out if target != p)), warnings
 
-def analyze(sources, config, modules=None, importers=None):
+def analyze(sources, config, modules=None, importers=None, import_cache=None):
     sources = {p: text for p, text in sources.items() if safe_path(p) and CODE.search(p) and not SKIP.search(p)}
     paths = set(sources)
-    modules = modules if modules is not None else config['modules'] if 'modules' in config else infer_modules(paths)
+    modules = modules if modules is not None else config['modules'] if 'modules' in config else infer_modules(paths, config.get('pythonRoots', ('', 'src')))
     module_map = {m['path']: m for m in modules}
     files = {p: {'path': p, 'district': module_for(p, modules), 'lines': len(t.splitlines()), 'gate': False} for p, t in sources.items()}
     for p, f in files.items():
@@ -143,9 +155,13 @@ def analyze(sources, config, modules=None, importers=None):
         f['gate'] = bool(mod and any(fnmatch.fnmatchcase(p, pattern) for pattern in mod.get('public', [])))
     edges, shortcuts, warnings = [], [], []
     selected = sources if importers is None else {p: text for p, text in sources.items() if p in importers}
-    parsed_js = parse_js_sources({p: text for p, text in selected.items() if not p.endswith('.py')})
+    parsed_js = parse_js_sources({p: text for p, text in selected.items() if not p.endswith('.py') and (import_cache is None or p not in import_cache)})
     for p, text in selected.items():
-        imports, failed = extract_imports(p, text, paths, config, parsed_js.get(p))
+        if import_cache is not None and p in import_cache:
+            imports, failed = import_cache[p]
+        else:
+            imports, failed = extract_imports(p, text, paths, config, parsed_js.get(p))
+            if import_cache is not None: import_cache[p] = (imports, failed)
         warnings.extend(failed)
         seen = set()
         for target, line in imports:
@@ -229,11 +245,19 @@ class Repository:
                 sources[p] = path.read_text(errors='replace')
         return sources
 
-def scan(repo, config, maximum=70, working=False, maximum_records=100000):
+def scan(repo, config, maximum=70, working=False, maximum_records=100000, history_analysis=False):
+    if __package__:
+        from .entropy import EntropyTracker, Ownership, metadata as entropy_metadata, parse_numstat, sampled_values, settings as entropy_settings
+        from .rework import ReworkTracker, REWORK_METHOD
+    else:
+        from entropy import EntropyTracker, Ownership, metadata as entropy_metadata, parse_numstat, sampled_values, settings as entropy_settings
+        from rework import ReworkTracker, REWORK_METHOD
     if maximum < 2 or maximum > 366:
         raise ValueError('maximum snapshots must be between 2 and 366')
     if maximum_records < 1:
         raise ValueError('maximum snapshot records must be positive')
+    if not isinstance(history_analysis, bool):
+        raise ValueError('history_analysis must be a boolean')
     repo = Repository(repo)
     head = repo.head()
     rows = git(repo.path, 'log', '--first-parent', '--reverse', '--format=%H %ct', head).decode().splitlines() if head else []
@@ -241,7 +265,7 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000):
     head_sources = repo.tree(head) if head else {}
     # An unborn checkout still has a useful city: its current source files.
     working_sources = repo.working() if working or head is None else None
-    modules = config.get('modules', infer_modules(set(head_sources) | set(working_sources or {})))
+    modules = config.get('modules', infer_modules(set(head_sources) | set(working_sources or {}), config.get('pythonRoots', ('', 'src'))))
     head_result = analyze(head_sources, config, modules)
     records_per_snapshot = max(1, len(head_result['files']) + len(head_result['imports']))
     budget_limit = max(2, maximum_records // records_per_snapshot - (working_sources is not None))
@@ -249,15 +273,38 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000):
     sampled = commits
     if len(commits) > limit:
         sampled = [commits[round(i * (len(commits) - 1) / (limit - 1))] for i in range(limit)]
+    include_path = lambda p: safe_path(p) and CODE.search(p) and not SKIP.search(p)
+    shallow = git(repo.path, 'rev-parse', '--is-shallow-repository').strip() == b'true' if head else False
+    entropy = None
+    if history_analysis:
+        ownership = Ownership(modules, config, module_for, lambda p: bool(TEST.search(p)))
+        rework = ReworkTracker(ownership.owner, window_days=entropy_settings(config)['reworkDays'])
+        entropy = EntropyTracker(config, ownership, rework, history_complete=not shallow)
+    numstats = parse_numstat(git(repo.path, 'log', '--first-parent', '--reverse', '--root', '--diff-merges=first-parent',
+                                 '--format=%x00@@%H%x00', '--numstat', '-z', '-w', '--no-renames', head), include_path) if head and history_analysis else {}
+    sampled_shas = {sha for sha, _ in sampled}
     snapshots = []
     all_files, previous, last_changed = {}, {}, {}
+    previous_sources, import_cache = {}, {}
     warnings = set()
     if len(commits) > limit and budget_limit < maximum:
         warnings.add('History sampled at %d commits using a %d file/import record budget estimated from HEAD; first and latest commits are retained.' % (limit, maximum_records))
-    for i, (sha, timestamp) in enumerate(sampled):
+    observed = commits if history_analysis else sampled
+    for i, (sha, timestamp) in enumerate(observed):
         date = dt.datetime.fromtimestamp(timestamp, dt.timezone.utc).strftime('%Y-%m-%d')
         sources = repo.tree(sha)
-        result = head_result if sha == head else analyze(sources, config, modules)
+        if set(sources) != set(previous_sources): import_cache.clear()
+        else:
+            for path, source in sources.items():
+                if previous_sources.get(path) != source: import_cache.pop(path, None)
+        result = head_result if sha == head else analyze(sources, config, modules, import_cache=import_cache)
+        if entropy is not None:
+            entropy.observe(sources, result, timestamp, numstats.get(sha, {}))
+        previous_sources = sources
+        if sha not in sampled_shas: continue
+        entropy_values = entropy.values(timestamp) if entropy is not None else sampled_values(result, config)
+        result['entropy'] = entropy_values['repo']
+        for district in result['districts']: district['entropy'] = entropy_values['districts'][district['id']]
         warnings.update(result.pop('warnings'))
         digests = {}
         for p, f in result['files'].items():
@@ -269,11 +316,16 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000):
             all_files[p] = {k: f[k] for k in ('path', 'district', 'gate')}
         previous = digests
         snapshots.append({'date': date, 'timestamp': timestamp, 'revision': sha[:12], **result})
-        print('Scanning %s %s (%d/%d)' % (date, sha[:12], i + 1, len(sampled)), file=sys.stderr)
+        print('Scanning %s %s (%d/%d analyzed commits; %d/%d views)' % (date, sha[:12], i + 1, len(observed), len(snapshots), len(sampled)), file=sys.stderr)
     if working_sources is not None:
         result = analyze(working_sources, config, modules)
         warnings.update(result.pop('warnings'))
         timestamp = int(dt.datetime.now(dt.timezone.utc).timestamp())
+        if entropy is not None:
+            entropy.observe(working_sources, result, timestamp, {}, committed=False)
+        entropy_values = entropy.values(timestamp) if entropy is not None else sampled_values(result, config)
+        result['entropy'] = entropy_values['repo']
+        for district in result['districts']: district['entropy'] = entropy_values['districts'][district['id']]
         for p, f in result['files'].items():
             digest = hashlib.sha256(working_sources[p].encode()).digest()
             f['changed'] = timestamp if previous.get(p) != digest else last_changed[p]
@@ -288,8 +340,20 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000):
         touched = [p for p in lines[1:] if p in all_files]
         if touched:
             changes.append({'time': int(lines[0]), 'files': touched})
+    rework_days = entropy_settings(config)['reworkDays']
+    rework_method = {**REWORK_METHOD, 'windowDays': rework_days,
+                     'definition': REWORK_METHOD['definition'].replace('14 days', '%d days' % rework_days)}
+    entropy_meta = {**entropy_metadata(config), 'reworkMethod': rework_method, 'firstParentCommits': len(commits),
+                    'historyComplete': not shallow, 'historyAnalysis': history_analysis,
+                    'analysisMode': 'full_history' if history_analysis else 'sampled', 'analyzedCommits': len(observed)}
+    sampling = {'method': 'evenly_spaced_first_parent_commits', 'availableCommits': len(commits),
+                'maxSnapshots': maximum, 'recordBudget': maximum_records,
+                'estimatedRecordsPerSnapshot': records_per_snapshot, 'snapshotLimit': limit,
+                'historicalSnapshots': len(sampled), 'workingTreeIncluded': working_sources is not None,
+                'sampled': len(sampled) < len(commits),
+                'limitedByRecordBudget': budget_limit < min(maximum, len(commits))}
     return {'schemaVersion': 1, 'meta': {'name': config.get('name', repo.path.name), 'private': config.get('private', True),
-            'revision': head, 'gatePolicy': 'declared' if 'modules' in config and not any(m.get('inferred') for m in modules) else 'inferred from current package entry points',
+            'revision': head, 'entropy': entropy_meta, 'sampling': sampling, 'gatePolicy': 'declared' if 'modules' in config and not any(m.get('inferred') for m in modules) else 'inferred from current package entry points',
             'coverage': 'Python and TypeScript ASTs. Static import strings are resolved locally; computed paths, external packages and runtime resolution may be missed.',
             'limitations': ['Boundary pressure is not a validated entropy or defect predictor.',
                            'Current gate definitions are applied to all snapshots; past intent is not inferred.',
@@ -301,7 +365,7 @@ def check(repo, config, base='HEAD'):
     r = Repository(repo)
     before_sources = {} if base == 'HEAD' and r.head() is None else r.tree(base)
     after_sources = r.working()
-    modules = config.get('modules', infer_modules(set(before_sources) | set(after_sources)))
+    modules = config.get('modules', infer_modules(set(before_sources) | set(after_sources), config.get('pythonRoots', ('', 'src'))))
     before = analyze(before_sources, config, modules)
     after = analyze(after_sources, config, modules)
     key = lambda e: (e['source'], e['target'])
@@ -321,6 +385,8 @@ def main():
     ap.add_argument('--max-snapshot-records', type=int, default=100000,
                     help='Approximate total file/import record budget, estimated from HEAD (default: 100000).')
     ap.add_argument('--working', action='store_true')
+    ap.add_argument('--history-analysis', action='store_true',
+                    help='Replay every first-parent commit for rework, scatter, and shortcut-age signals (slower).')
     ap.add_argument('--base', default='HEAD')
     ap.add_argument('--module')
     args = ap.parse_args()
@@ -341,7 +407,7 @@ def main():
                       'desirePaths': [d for d in result['desirePaths'] if result['files'][d['target']]['district'] == args.module]}
         print(json.dumps(result, indent=2))
         return 0
-    result = scan(args.repo, config, args.max_snapshots, args.working, args.max_snapshot_records)
+    result = scan(args.repo, config, args.max_snapshots, args.working, args.max_snapshot_records, args.history_analysis)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, separators=(',', ':')))
