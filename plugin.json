@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "strata",
+  "version": "0.1.0",
+  "description": "See codebase boundaries, investigate desire paths, and keep agent changes inside public gates.",
+  "extensions": { "com.openai": { "hooks": "./hooks/hooks.json" } }
+}

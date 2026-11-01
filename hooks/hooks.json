@@ -1,0 +1,6 @@
+{
+  "hooks": {
+    "PreToolUse": [{ "matcher": "apply_patch|Edit|Write", "hooks": [{ "type": "command", "command": "python3 \"${CODEX_PLUGIN_ROOT}/hooks/check.py\"", "timeout": 10 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "python3 \"${CODEX_PLUGIN_ROOT}/hooks/check.py\"", "timeout": 10 }] }]
+  }
+}

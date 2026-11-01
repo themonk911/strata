@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f4f3ee"><title>strata — a living map of your code</title><link rel="stylesheet" href="./style.css"></head>
+<body>
+  <header class="topbar">
+    <a class="wordmark" href="./" aria-label="Strata home"><span class="mark"><i></i><i></i><i></i></span>strata<span class="beta">A LIVING ATLAS OF CODE</span></a>
+    <div class="top-actions"><span id="connection" class="connection"><span class="status-dot"></span>Local workspace</span><div class="utility-actions"><button id="rescan" class="icon-button" aria-label="Rescan the working tree" title="Rescan the working tree">↻</button><button id="theme" class="icon-button" aria-label="Switch color theme" title="Switch color theme">◐</button><button id="about" class="icon-button" aria-label="How to read this city" title="How to read this city">?</button></div><button id="postcard" class="portrait-button" title="Generate a city illustration with Codex" aria-label="Illustrate city"><span aria-hidden="true">✧</span><span class="portrait-label">Illustrate</span></button><button id="film" class="primary compact film-launch"><span class="film-play" aria-hidden="true">▶</span><span class="film-button-label">Create codebase film</span><span class="film-button-arrow" aria-hidden="true">↗</span></button></div>
+  </header>
+  <main>
+    <div id="viewport" aria-label="Interactive 3D code city. Use the district list to navigate with a keyboard."></div>
+    <div id="loading" class="loading"><span class="mark"><i></i><i></i><i></i></span><p>Reading the city…</p></div>
+    <aside class="left-panel">
+      <div class="eyebrow">YOUR CODE, IN PERSPECTIVE</div>
+      <h1 id="repo-name">Your city</h1>
+      <p class="subtitle">A place for every file.<br>A story in every change.</p>
+      <div class="repo-tag"><span class="status-dot"></span><span id="repo-privacy">Local repository</span></div>
+      <div class="overview"><div><strong id="file-count">—</strong><span>buildings</span></div><div><strong id="line-count">—</strong><span>lines of code</span></div></div>
+      <div class="section-label"><span>DISTRICTS</span><span id="district-count"></span></div>
+      <label class="search"><span>⌕</span><input id="search" type="search" placeholder="Find a district…" aria-label="Find a district"></label>
+      <nav id="district-list" class="district-list" aria-label="Districts"></nav>
+      <div class="left-bottom"><button id="reset" class="text-button">↗ View the whole city</button><span id="snapshot-count" class="muted"></span></div>
+    </aside>
+    <div class="view-controls" role="group" aria-label="City view"><button data-mode="city" class="active">City</button><button data-mode="shortcuts">Shortcuts <span id="shortcut-badge">0</span></button><button data-mode="activity">Activity</button></div>
+    <div class="scene-caption"><span class="caption-line"></span><span id="scene-caption">Buildings are files. Walls are module boundaries.</span></div>
+    <aside id="inspector" class="inspector">
+      <div class="eyebrow"><span class="violet-dot"></span>DISTRICT NOTES</div>
+      <div class="district-heading"><h2 id="district-title">Select a district</h2><button id="focus" class="icon-button" title="Focus selected district" aria-label="Focus selected district">⌖</button></div>
+      <p id="district-path" class="code muted"></p>
+      <div id="gate-badge" class="gate-badge">Package boundary</div>
+      <div class="pressure"><div><span class="small-label">SHORTCUTS INTO THIS DISTRICT</span><strong id="incoming">—</strong></div><svg id="district-trend" viewBox="0 0 120 50" aria-label="Shortcut history"></svg></div>
+      <p id="district-meaning" class="meaning">Choose a district to inspect its boundaries.</p>
+      <div class="divider"></div>
+      <div class="section-label"><span>A PATH WORTH FOLLOWING</span><span class="violet">◎</span></div>
+      <div id="desire-path" class="desire-path"></div>
+      <div id="gate-detail" class="gate-detail"></div>
+      <div class="agent-actions"><button id="judge" class="violet-button">◇ Read this boundary <span>Decisions</span></button><details class="repair-tools"><summary>Work on this boundary <span aria-hidden="true">+</span></summary><div class="repair-tools-content"><button id="explain" class="secondary-button">Investigate with Codex <span>↗</span></button><button id="copy-task" class="text-button">Copy a repair task</button></div></details></div>
+      <div id="intelligence" class="intelligence" aria-live="polite"></div>
+      <details class="evidence"><summary>Inspect the evidence <span>↗</span></summary><div id="evidence-list"></div></details>
+      <p class="inspector-footnote">A signal to investigate, not a verdict on your code.</p>
+    </aside>
+    <div class="legend"><span><i class="key building-key"></i>File</span><span><i class="key heat-key"></i>Recent change</span><span><i class="key shortcut-key"></i>Shortcut</span><span><i class="ring-key"></i>Desire path</span></div>
+    <div class="map-wrap"><span class="small-label">CITY PLAN</span><svg id="minimap" viewBox="0 0 150 110" role="img" aria-label="District minimap"></svg></div>
+    <section class="timeline" aria-label="Git history timeline">
+      <div class="timeline-top"><div class="timeline-heading"><span class="status-dot"></span><span id="timeline-label">THE SHAPE OF CHANGE</span></div><span id="current-date" class="code"></span><div class="play-controls"><button id="play" class="play-button" aria-label="Play history">▶</button><button id="speed" class="speed-button" aria-label="Playback speed">1×</button></div></div>
+      <div class="chart-wrap"><svg id="history-chart" viewBox="0 0 800 38" preserveAspectRatio="none" aria-label="Shortcut count over history"></svg><div id="chart-cursor"></div><input type="range" id="scrubber" min="0" max="0" value="0" step="0.01" aria-label="History snapshot"></div>
+      <div class="timeline-bottom"><span id="first-date"></span><span id="timeline-note">DRAG TO EXPLORE · SHORTCUTS THROUGH TIME</span><span id="last-date"></span></div>
+    </section>
+    <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </main>
+  <dialog id="modal"><button id="close-modal" class="close-modal" aria-label="Close dialog">×</button><div id="modal-content"></div></dialog>
+  <script type="module" src="./app.js"></script>
+</body></html>

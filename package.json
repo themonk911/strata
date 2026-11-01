@@ -1,0 +1,31 @@
+{
+  "name": "strata-city",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "See your codebase change. Give your agents boundaries.",
+  "bin": {
+    "strata": "bin/strata.mjs"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node --env-file-if-exists=.env.local server/index.mjs",
+    "test": "python3 -m unittest discover -s tests -p 'test_*.py' && node --test tests/*.test.mjs",
+    "scan": "python3 core/scan.py",
+    "demo": "python3 scripts/demo.py",
+    "package:plugin": "node scripts/package-plugin.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "d3-force": "^3.0.0",
+    "d3-polygon": "^3.0.1",
+    "three": "^0.187.0",
+    "typescript": "5.9.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

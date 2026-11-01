@@ -1,0 +1,12 @@
+{
+  "name": "strata",
+  "private": false,
+  "pythonRoots": [""],
+  "modules": [
+    { "path": "core", "public": ["core/__init__.py"] },
+    { "path": "server", "public": ["server/api.mjs"] },
+    { "path": "web", "public": ["web/app.js"] }
+  ],
+  "allow": [],
+  "aliases": {}
+}

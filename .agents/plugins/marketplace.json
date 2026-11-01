@@ -1,0 +1,17 @@
+{
+  "name": "strata-dev",
+  "plugins": [
+    {
+      "name": "strata",
+      "source": {
+        "source": "local",
+        "path": "./.local/strata-plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
