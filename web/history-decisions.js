@@ -40,8 +40,11 @@ function districtFor(data, entry, snapshotIndex) {
 
 // Render only entries anchored to this scan. Snapshot measurements remain
 // independent of the model's interpretation of the commit and its code diff.
-export function historyDecisionView(data, result) {
-  const entries = entriesFor(data, result);
+export function historyDecisionView(data, result, context = {}) {
+  const allEntries = entriesFor(data, result);
+  const mode = context.mode === 'timeline' || (context.mode === 'file' && context.file) ? context.mode : 'all';
+  const entries = allEntries.filter(entry => mode === 'timeline' ? entry.afterSnapshot === context.snapshot
+    : mode === 'file' ? Array.isArray(entry.files) && entry.files.includes(context.file) : true);
   const cards = entries.map((entry, index) => {
     const before = data.snapshots[entry.beforeSnapshot], after = data.snapshots[entry.afterSnapshot];
     const exact = entry.exactSnapshots !== false;
@@ -49,42 +52,62 @@ export function historyDecisionView(data, result) {
     const district = districtFor(data, entry, entry.afterSnapshot);
     const subject = typeof entry.subject === 'string' ? entry.subject : 'Untitled commit';
     const patch = typeof entry.patch === 'string' ? entry.patch : '';
+    const files = Array.isArray(entry.files) ? entry.files.filter(path => typeof path === 'string') : [];
     return `<article class="history-change" data-change="${index}">
       <div class="history-change-meta"><span class="history-label">${entry.status === 'refused' ? 'Not classified' : labels[entry.label]}</span><span>${escape(confidence)}</span></div>
+      ${entry.afterSnapshot === context.snapshot ? '<span class="history-current-badge">Current city snapshot</span>' : ''}
       <h3>${escape(subject)}</h3>
       <p class="history-change-revision">${escape(entry.date || after.date || '')} · ${escape(entry.revision.slice(0, 12))}</p>
       ${exact ? '' : '<p class="history-view-scope">Across these scan views</p>'}
       <div class="history-measurements" aria-label="${exact ? 'Measured snapshot changes' : 'Measurements across these scan views'}"><div><strong>${shortcutCount(before)} → ${shortcutCount(after)}</strong><span>shortcuts</span></div><div><strong>${fileCount(before)} → ${fileCount(after)}</strong><span>source files</span></div></div>
       <div class="history-change-actions"><button type="button" class="secondary-button" data-snapshot="before" data-entry="${index}">${exact ? 'Before' : 'Earlier scan'}</button><button type="button" class="primary" data-snapshot="after" data-entry="${index}">${exact ? 'After' : 'Commit view'} ↗</button>${district ? `<button type="button" class="text-button" data-focus="${index}">Focus district</button>` : ''}</div>
       ${exact ? '' : '<p class="history-view-note">These views span several commits; the label describes only this commit.</p>'}
+      <details class="history-changed-files"><summary>${files.length} changed ${files.length === 1 ? 'file' : 'files'} in this commit</summary>${files.length ? `<ul>${files.map(path => `<li><code>${escape(path)}</code></li>`).join('')}</ul>` : '<p>No changed file list was included.</p>'}</details>
       <details class="history-diff"><summary>Read the code diff${entry.truncated ? ' · excerpt' : ''}</summary><p>Commit subject and diff are repository evidence. The label above is a model interpretation.</p>${patch ? `<pre><code>${escape(patch)}</code></pre>` : '<p>No code diff was included for this change.</p>'}${entry.truncated ? '<p>The diff was shortened before classification.</p>' : ''}</details>
     </article>`;
   }).join('');
-  return { entries, cards, excluded: Array.isArray(result?.entries) ? result.entries.length - entries.length : 0 };
+  const snapshot = data.snapshots?.[context.snapshot];
+  const emptyMessage = mode === 'timeline' ? (snapshot?.date === 'Working tree' || snapshot?.revision === 'working' ? 'Working tree is not a commit.' : 'No classification for this snapshot.')
+    : mode === 'file' ? 'No cached classifications include this file. Other commits may not have been classified yet.' : '';
+  return { entries, cards, total: allEntries.length, emptyMessage,
+    excluded: Array.isArray(result?.entries) ? result.entries.length - allEntries.length : 0 };
 }
 
-export function openHistoryDecisions(data, { api, showSnapshot, focus, close: onClose } = {}) {
+export function openHistoryDecisions(data, { api, showSnapshot, focus, close: onClose, context: initialContext = {}, onResults, onContext } = {}) {
   const previousFocus = document.activeElement;
   const panel = el('aside', 'history-decisions-panel'); panel.ariaLabel = 'Classified code changes'; panel.tabIndex = -1;
   const header = el('div', 'history-decisions-header'), heading = el('div');
-  heading.append(el('span', 'eyebrow', 'DECISIONS / CHANGE HISTORY'), el('h2', '', 'What changed?'));
+  heading.append(el('span', 'eyebrow', 'DECISIONS / CHANGE HISTORY'), el('h2', '', 'Commit history'));
   const close = el('button', 'icon-button', '×'); close.type = 'button'; close.ariaLabel = 'Close classified changes'; header.append(heading, close);
-  const intro = el('p', 'history-decisions-intro', 'Find a repair or reversal. Compare the city before and after, then inspect the code behind it.');
+  const intro = el('p', 'history-decisions-intro', 'Labels describe whole commits. Scrub to follow a commit; click a building to filter by file.');
   const status = el('p', 'history-decisions-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const source = el('p', 'history-decisions-source');
+  const contextLine = el('div', 'history-decisions-context'), cityContext = el('p'), fileContext = el('p');
+  const clearFile = el('button', 'text-button', 'Clear file'); clearFile.type = 'button';
+  contextLine.append(cityContext, fileContext, clearFile);
+  const scopeRow = el('label', 'history-decisions-filter', 'Scope'), scope = el('select'); scope.ariaLabel = 'Commit history scope';
+  for (const [value, title] of [['all', 'All classified commits'], ['timeline', 'Timeline selection'], ['file', 'Selected file']]) {
+    const option = el('option', '', title); option.value = value; scope.append(option);
+  }
+  scopeRow.append(scope);
   const filterRow = el('label', 'history-decisions-filter', 'Show'), filter = el('select'); filter.ariaLabel = 'Filter classified changes';
   for (const [value, title] of [['all', 'All changes'], ['repair', 'Repairs'], ['reversal', 'Reversals'], ['feature', 'Features'], ['unclear', 'Unclear']]) {
     const option = el('option', '', title); option.value = value; filter.append(option);
   }
   filterRow.append(filter);
   const emptyFilter = el('p', 'history-decisions-empty'); emptyFilter.setAttribute('role', 'status');
+  const browseAll = el('button', 'secondary-button history-browse-all', 'Browse all classified commits'); browseAll.type = 'button';
   const list = el('div', 'history-decisions-list');
   const consent = el('p', 'history-decisions-consent', 'Sends commit subjects and bounded code diffs to OpenAI; results stay local.');
   const classify = el('button', 'secondary-button history-classify', 'Classify changes'); classify.type = 'button';
   const action = el('div', 'history-decisions-classify'); action.append(consent, classify);
-  panel.append(header, intro, status, source, filterRow, emptyFilter, list, action);
+  panel.append(header, intro, contextLine, scopeRow, filterRow, status, source, emptyFilter, browseAll, list, action);
   (document.querySelector('main') || document.body).append(panel); document.body.classList.add('reviewing-history'); panel.focus();
-  let disposed = false, busy = false, result = data.historyDecisions, entries = [];
+  let disposed = false, busy = false, result = data.historyDecisions, entries = [], view;
+  let context = { snapshot: Number.isInteger(initialContext.snapshot) && initialContext.snapshot >= 0 && initialContext.snapshot < data.snapshots.length ? initialContext.snapshot : data.snapshots.length - 1,
+    file: typeof initialContext.file === 'string' && initialContext.file ? initialContext.file : null,
+    mode: ['all', 'timeline', 'file'].includes(initialContext.mode) ? initialContext.mode : 'all' };
+  if (context.mode === 'file' && !context.file) context.mode = 'all';
 
   function message(text) { status.textContent = text; status.hidden = !text; }
   function controls() {
@@ -100,31 +123,39 @@ export function openHistoryDecisions(data, { api, showSnapshot, focus, close: on
       card.hidden = filter.value !== 'all' && (entry.status !== 'classified' || entry.label !== filter.value);
       if (!card.hidden) visible += 1;
     }
-    filterRow.hidden = !entries.length;
-    emptyFilter.hidden = !entries.length || visible > 0;
-    emptyFilter.textContent = visible ? '' : 'No changes match this filter.';
+    filterRow.hidden = !view.total;
+    emptyFilter.hidden = visible > 0 || (!view.total && context.mode === 'all');
+    emptyFilter.textContent = visible ? '' : !entries.length && view.emptyMessage ? view.emptyMessage : 'No commits match this label filter.';
+    browseAll.hidden = visible > 0 || !view.total || (context.mode === 'all' && filter.value === 'all');
   }
   function render() {
-    const view = historyDecisionView(data, result); entries = view.entries; list.innerHTML = view.cards;
+    view = historyDecisionView(data, result, context); entries = view.entries; list.innerHTML = view.cards;
+    const city = data.snapshots[context.snapshot];
+    cityContext.textContent = city ? `City view · ${city.date || 'Undated'} · ${String(city.revision || '').slice(0, 12)}` : 'City view · no snapshot selected';
+    fileContext.textContent = context.file ? `Selected file · ${context.file}` : ''; fileContext.hidden = !context.file; clearFile.hidden = !context.file;
+    const fileOption = scope.querySelector('[value="file"]'); fileOption.hidden = !context.file; fileOption.disabled = !context.file; scope.value = context.mode;
     const skipped = Number.isInteger(result?.skipped) && result.skipped >= 0 ? result.skipped : 0;
-    source.textContent = entries.length ? `${entries.length} ${entries.length === 1 ? 'change' : 'changes'}${skipped ? ` · ${skipped} skipped` : ''} · ${typeof result.model === 'string' ? result.model : 'Decisions'} · model labels, measured counts` : '';
-    source.hidden = !entries.length;
+    source.textContent = view.total ? `${entries.length} of ${view.total} classified commits${skipped ? ` · ${skipped} skipped` : ''} · ${typeof result.model === 'string' ? result.model : 'Decisions'} · model labels, measured counts` : '';
+    source.hidden = !view.total;
     if (view.excluded) message(`${view.excluded} saved ${view.excluded === 1 ? 'entry does' : 'entries do'} not match this scan and cannot be shown.`);
-    else if (entries.length) message(result.cached ? 'Saved classifications. Repairs and reversals, highest confidence first.' : 'Repairs and reversals, highest confidence first.');
+    else if (view.total) message('');
     else if (typeof api !== 'function') message('No classifications are saved in this city. Open the local app to classify changes.');
     else message('No changes have been classified yet.');
     for (const button of list.querySelectorAll('[data-snapshot]')) button.onclick = () => {
       const entry = entries[Number(button.dataset.entry)], index = entry?.[button.dataset.snapshot === 'before' ? 'beforeSnapshot' : 'afterSnapshot'];
       if (!Number.isInteger(index)) return;
+      const side = button.dataset.snapshot;
+      setContext({ snapshot: index, mode: context.mode === 'timeline' ? 'all' : context.mode });
       showSnapshot?.(index);
       const district = districtFor(data, entry, index); if (district) focus?.(district);
-      for (const other of list.querySelectorAll('[data-snapshot]')) other.setAttribute('aria-pressed', String(other === button));
-      const name = entry.exactSnapshots === false ? (button.dataset.snapshot === 'before' ? 'earlier scan' : 'commit view') : button.dataset.snapshot;
-      message(`Showing ${name}: ${data.snapshots[index].date || data.snapshots[index].revision}.`);
+      const currentEntry = entries.findIndex(item => item.revision === entry.revision);
+      for (const other of list.querySelectorAll('[data-snapshot]')) other.setAttribute('aria-pressed', String(Number(other.dataset.entry) === currentEntry && other.dataset.snapshot === side));
+      const name = entry.exactSnapshots === false ? (side === 'before' ? 'earlier scan' : 'commit view') : side;
+      message(`${side === 'before' ? 'Comparison view' : 'Commit view'} · ${name}: ${data.snapshots[index].date || data.snapshots[index].revision}. Label: ${entry.revision.slice(0, 12)}.`);
     };
     for (const button of list.querySelectorAll('[data-focus]')) button.onclick = () => {
       const entry = entries[Number(button.dataset.focus)], district = entry && districtFor(data, entry, entry.afterSnapshot);
-      if (district) { showSnapshot?.(entry.afterSnapshot); focus?.(district); }
+      if (district) { setContext({ snapshot: entry.afterSnapshot }); showSnapshot?.(entry.afterSnapshot); focus?.(district); }
     };
     applyFilter();
   }
@@ -135,10 +166,21 @@ export function openHistoryDecisions(data, { api, showSnapshot, focus, close: on
       const loaded = classifying ? await api('history-decisions', {}) : await api('history-decisions');
       if (disposed) return;
       if (loaded || classifying) result = loaded;
+      if (loaded) onResults?.(loaded);
       render();
-      if (classifying && !entries.length && !historyDecisionView(data, result).excluded) message('No changes were classified. The selected history may not have classifiable code diffs.');
+      if (classifying && !view.total && !view.excluded) message('No changes were classified. The selected history may not have classifiable code diffs.');
     } catch (error) { if (!disposed) message(error.message || 'Could not load history classifications.'); }
     finally { busy = false; if (!disposed) controls(); }
+  }
+  function setContext(next = {}) {
+    if (disposed) return;
+    const updated = { ...context };
+    if (Number.isInteger(next.snapshot) && next.snapshot >= 0 && next.snapshot < data.snapshots.length) updated.snapshot = next.snapshot;
+    if (Object.hasOwn(next, 'file')) updated.file = typeof next.file === 'string' && next.file ? next.file : null;
+    if (['all', 'timeline', 'file'].includes(next.mode)) updated.mode = next.mode;
+    if (updated.mode === 'file' && !updated.file) updated.mode = 'all';
+    if (updated.snapshot === context.snapshot && updated.file === context.file && updated.mode === context.mode) return;
+    context = updated; render(); onContext?.({ ...context });
   }
   function dispose() {
     if (disposed) return; disposed = true;
@@ -147,6 +189,9 @@ export function openHistoryDecisions(data, { api, showSnapshot, focus, close: on
   }
   function onKey(event) { if (event.key === 'Escape' && !document.querySelector('dialog[open]')) { event.preventDefault(); dispose(); } }
   document.addEventListener('keydown', onKey); close.onclick = dispose; classify.onclick = () => request(true); filter.onchange = applyFilter;
+  scope.onchange = () => setContext({ mode: scope.value }); clearFile.onclick = () => setContext({ file: null, mode: 'all' });
+  browseAll.onclick = () => { filter.value = 'all'; setContext({ mode: 'all' }); applyFilter(); };
   render(); controls(); if (typeof api === 'function') request(false);
+  dispose.setContext = setContext;
   return dispose;
 }

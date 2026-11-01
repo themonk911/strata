@@ -10,7 +10,7 @@ import './history-decisions.css';
 const $ = id => document.getElementById(id);
 const number = n => new Intl.NumberFormat('en-GB', { notation: n > 99999 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(n);
 const date = value => value === 'Working tree' ? value : new Date(value + 'T12:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
-let data, city, selected, current = 0, playing = false, speed = 1, lastTick = 0, status = {}, toastTimer, activeJob = null, closeTour = null, closeHistory = null;
+let data, city, selected, selectedFile = null, current = 0, playing = false, speed = 1, lastTick = 0, status = {}, toastTimer, activeJob = null, closeTour = null, closeHistory = null, historyResults = null;
 const snapshot = () => data.snapshots[Math.round(current)];
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 4500); }
 async function api(path, input) {
@@ -70,7 +70,11 @@ function renderMinimap() {
 function select(id, focus = false) {
   selected = id; city.select(id, focus); $('intelligence').textContent = ''; renderDistrictList(); renderInspector(); renderMinimap();
 }
-function update(index) {
+function selectFile(path) {
+  selectedFile = path;
+  closeHistory?.setContext({ file: path, mode: 'file' });
+}
+function update(index, followTimeline = false) {
   const old = Math.round(current); current = Math.max(0, Math.min(data.snapshots.length - 1, index));
   $('scrubber').value = current; $('chart-cursor').style.left = `${current / Math.max(1, data.snapshots.length - 1) * 100}%`;
   if (old !== Math.round(current) || !$('current-date').textContent) {
@@ -79,16 +83,17 @@ function update(index) {
     $('shortcut-badge').textContent = s.shortcuts.length; $('current-date').textContent = date(s.date);
     renderDistrictList(); renderInspector();
   }
+  closeHistory?.setContext({ snapshot: Math.round(current), ...(followTimeline ? { mode: 'timeline' } : {}) });
 }
 function play(value) { playing = value; lastTick = performance.now(); $('play').textContent = value ? 'Ⅱ' : '▶'; $('play').ariaLabel = value ? 'Pause history' : 'Play history'; }
 function frame(now) {
   if (!playing) return;
   const next = current + (now - lastTick) / 1000 * 2.4 * speed; lastTick = now;
-  update(next); if (current >= data.snapshots.length - 1) play(false);
+  update(next, true); if (current >= data.snapshots.length - 1) play(false);
 }
 function hover(file) {
   if (!file) { $('tooltip').hidden = true; return; }
-  $('tooltip').innerHTML = `<b>${escape(file.path)}</b><span>${file.deleted ? 'Not present at this point in history' : `${number(file.lines)} lines · ${file.gate ? 'public gate' : 'source file'}`}</span><span>Click to inspect the district</span>`;
+  $('tooltip').innerHTML = `<b>${escape(file.path)}</b><span>${file.deleted ? 'Not present at this point in history' : `${number(file.lines)} lines · ${file.gate ? 'public gate' : 'source file'}`}</span><span>${closeHistory ? 'Click to see classified commits touching this file' : 'Click to inspect the district'}</span>`;
   $('tooltip').style.left = Math.min(innerWidth - 315, Math.max(10, file.x + 16)) + 'px'; $('tooltip').style.top = Math.min(innerHeight - 110, file.y + 16) + 'px'; $('tooltip').hidden = false;
 }
 function repairTask() {
@@ -131,8 +136,11 @@ function showAbout() {
 }
 function exploreHistory() {
   play(false); closeTour?.(); closeHistory?.();
-  closeHistory = openHistoryDecisions(data, {
+  closeHistory = openHistoryDecisions({ ...data, historyDecisions: historyResults || data.historyDecisions }, {
     api: status.local ? api : undefined,
+    context: { snapshot: Math.round(current), file: selectedFile, mode: selectedFile ? 'file' : 'all' },
+    onContext: context => selectedFile = context.file,
+    onResults: result => historyResults = result,
     showSnapshot: value => { play(false); update(value); },
     focus: id => select(id, true), close: () => closeHistory = null,
   });
@@ -147,7 +155,7 @@ async function init() {
     if (data.schemaVersion !== 1 || !data.snapshots?.length) throw new Error('Unsupported or empty city data.');
     current = data.snapshots.length - 1;
     $('repo-name').textContent = data.meta.name; $('repo-privacy').textContent = data.meta.private ? 'Private workspace' : 'Public sample';
-    city = new City($('viewport'), data, { select, hover, frame });
+    city = new City($('viewport'), data, { select, selectFile, hover, frame });
     if (!data.snapshots.some(s => Number.isFinite(s.entropy?.score))) $('history-signal').value = 'shortcuts';
     if (!metricHistory(data, 'entropy').some(Number.isFinite) && metricHistory(data, 'rework').some(Number.isFinite)) $('history-signal').value = 'rework';
     renderTimeline();
@@ -156,7 +164,7 @@ async function init() {
     // Force first statistics paint even though the selected index is unchanged.
     $('current-date').textContent = ''; update(current);
     $('loading').hidden = true;
-    $('scrubber').oninput = e => { play(false); update(Number(e.target.value)); $('intelligence').textContent = ''; };
+    $('scrubber').oninput = e => { play(false); update(Number(e.target.value), true); $('intelligence').textContent = ''; };
     $('play').onclick = () => { if (!playing && current >= data.snapshots.length - 1) update(0); play(!playing); };
     $('speed').onclick = () => { speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; $('speed').textContent = speed + '×'; };
     $('search').oninput = renderDistrictList;

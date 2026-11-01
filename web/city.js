@@ -44,7 +44,7 @@ export class City {
     this.renderer.domElement.addEventListener('pointerup', e => {
       if (!this.pointerStart || Math.hypot(e.clientX - this.pointerStart[0], e.clientY - this.pointerStart[1]) > 5) return;
       const hit = this.pick(e);
-      if (hit?.instanceId !== undefined) { const file = this.data.files[hit.instanceId]; callbacks.select(file.district); }
+      if (hit?.instanceId !== undefined) { const file = this.data.files[hit.instanceId]; callbacks.select(file.district); callbacks.selectFile?.(file.path); }
       else { const lot = this.raycaster.intersectObjects([...this.lots.values()].map(l => l.mesh))[0]; if (lot) callbacks.select(lot.object.userData.district); }
     });
     this.resizeObserver = new ResizeObserver(() => this.resize()); this.resizeObserver.observe(element);

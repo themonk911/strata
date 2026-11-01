@@ -89,3 +89,45 @@ test('within a label, stronger model confidence precedes recency without changin
   assert.equal(result.entries[2].label, 'repair');
   assert.equal(result.entries[2].confidence, .25);
 });
+
+test('timeline scope follows only the selected commit, while all scope keeps history and marks the current city', () => {
+  const cached = { entries: [entry()] };
+  const current = historyDecisionView(data, cached, { mode: 'timeline', snapshot: 1 });
+  assert.equal(current.entries.length, 1);
+  assert.match(current.cards, /Current city snapshot/);
+  const earlier = historyDecisionView(data, cached, { mode: 'timeline', snapshot: 0 });
+  assert.equal(earlier.entries.length, 0);
+  assert.equal(earlier.total, 1);
+  assert.equal(earlier.excluded, 0);
+  assert.equal(earlier.emptyMessage, 'No classification for this snapshot.');
+  assert.equal(historyDecisionView(data, cached, { mode: 'all', snapshot: 0 }).entries.length, 1);
+  assert.ok(!historyDecisionView(data, cached, { mode: 'all', snapshot: 0 }).cards.includes('Current city snapshot'));
+});
+
+test('selected-file scope uses the exact changed file list instead of district or patch text', () => {
+  const cached = { entries: [entry({ files: ['orders/use.py'], patch: 'mentions billing/api.py' })] };
+  assert.equal(historyDecisionView(data, cached, { mode: 'file', file: 'orders/use.py' }).entries.length, 1);
+  for (const path of ['orders', 'orders/other.py', 'billing/api.py']) {
+    const result = historyDecisionView(data, cached, { mode: 'file', file: path });
+    assert.equal(result.entries.length, 0, path);
+    assert.equal(result.total, 1);
+    assert.equal(result.emptyMessage, 'No cached classifications include this file. Other commits may not have been classified yet.');
+  }
+  assert.equal(historyDecisionView(data, cached, { mode: 'file', file: null }).entries.length, 1);
+});
+
+test('working-tree timeline scope explains why there is no commit label', () => {
+  const working = { ...data, snapshots: [...data.snapshots, { ...data.snapshots[1], date: 'Working tree', revision: 'working' }] };
+  const result = historyDecisionView(working, { entries: [entry()] }, { mode: 'timeline', snapshot: 2 });
+  assert.equal(result.cards, '');
+  assert.equal(result.emptyMessage, 'Working tree is not a commit.');
+  assert.equal(result.total, 1);
+});
+
+test('changed file lists show what the commit classification covers and escape paths', () => {
+  const result = historyDecisionView(data, { entries: [entry({ files: ['orders/use.py', '<script>file</script>.py'] })] });
+  assert.match(result.cards, /2 changed files in this commit/);
+  assert.match(result.cards, /orders\/use\.py/);
+  assert.match(result.cards, /&lt;script&gt;file&lt;\/script&gt;\.py/);
+  assert.ok(!result.cards.includes('<script>'));
+});
