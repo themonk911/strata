@@ -17,6 +17,6 @@ Use the CLI in this plugin's `bin/strata.mjs` (resolve relative to this skill's 
 
 Gates marked inferred are hypotheses. Confirm them against the repo's architecture; don't enforce their inferred intent as an established rule. Python imports use AST parsing. JavaScript/TypeScript extraction covers static string imports and can miss runtime resolution. Tests and configured adapters are exempt. No validated composite entropy index is supplied.
 
-The bundled pre-edit hook previews supported `apply_patch` input in memory. It cannot intercept every write path; the stop check and explicit CLI check cover worktree changes. Hook installation and trust belong to the user. Do not silently install or trust hooks, or expand filesystem/network permissions.
+The bundled pre-edit hook previews `apply_patch`, `Edit`, and `Write` input in memory, resolving relative paths from the tool's working directory. It cannot intercept every write path; the stop check and explicit CLI check cover worktree changes. Hook installation and trust belong to the user. Do not silently install or trust hooks, or expand filesystem/network permissions.
 
 Scan output contains repository paths and dependency structure. Keep private repo output local unless the user explicitly clears it for sharing.

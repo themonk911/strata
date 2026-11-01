@@ -100,7 +100,7 @@ const server = http.createServer(async (req, res) => {
     const path = new URL(req.url, 'http://localhost').pathname;
     if (req.method === 'GET' && path === '/api/city') return json(res, 200, await readCity());
     if (req.method === 'GET' && path === '/api/status') {
-      let status; try { status = await codex.connect(); } catch { status = { signedIn: false, imageGeneration: false }; }
+      let status; try { status = await codex.status(); } catch { status = { signedIn: false, imageGeneration: false }; }
       return json(res, 200, { ...status, decisions: Boolean(loadKey()), apiCalls, local: true, rescan: Boolean((await workspace()).repo) });
     }
     if (req.method === 'GET' && path.startsWith('/api/jobs/')) {

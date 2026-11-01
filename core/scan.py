@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 CODE = re.compile(r'\.(py|ts|tsx|js|jsx|mjs|cjs)$')
-SKIP = re.compile(r'(^|/)(node_modules|dist|build|vendor|\.git|\.venv|data|data_demo|app-state|codex-home|\.agents|\.codex)(/|$)|\.d\.ts$')
+SKIP = re.compile(r'(^|/)(node_modules|dist|build|vendor|\.git|\.venv|\.agents|\.codex)(/|$)|\.d\.ts$')
 TEST = re.compile(r'(^|/)(tests?|__tests__|__smoke__)/|(^|/)test_[^/]+\.py$|\.(test|spec)\.[^.]+$')
 JS_CACHE = {}
 
@@ -50,20 +50,18 @@ def load_config(repo, explicit=None):
 
 def infer_modules(paths):
     """Package entry points are hypotheses, visibly distinguished from declarations."""
-    modules = []
+    modules = {}
+    counts = collections.Counter(parent.as_posix() for p in paths for parent in PurePosixPath(p).parents)
     for p in sorted(paths):
-        if not p.endswith(('/__init__.py', '/index.ts', '/index.tsx', '/index.js')):
+        if not p.endswith(('/__init__.py', '/index.ts', '/index.tsx', '/index.js', '/index.jsx', '/index.mjs', '/index.cjs')):
             continue
         folder = p.rsplit('/', 1)[0]
-        if TEST.search(p) or folder.count('/') < 2:
+        if TEST.search(p):
             continue
-        # Prefer bounded feature/service packages, not a wall around the entire app.
-        if folder in ('backend/app/services', 'frontend/src/components', 'frontend/src'):
-            continue
-        count = sum(q.startswith(folder + '/') for q in paths)
-        if count >= 3:
-            modules.append({'path': folder, 'public': [p], 'inferred': True})
-    return modules
+        if counts[folder] >= 2:
+            module = modules.setdefault(folder, {'path': folder, 'public': [], 'inferred': True})
+            module['public'].append(p)
+    return list(modules.values())
 
 def module_for(p, modules):
     matches = [m['path'] for m in modules if p == m['path'] or p.startswith(m['path'] + '/')]
@@ -83,9 +81,10 @@ def extract_imports(p, text, paths, config, parsed_js=None):
     """Return local static edges and coverage warnings. Python uses the AST."""
     out, warnings = [], []
     if p.endswith('.py'):
-        roots = config.get('pythonRoots', ['backend', 'src', ''])
-        root = next((r for r in roots if r and p.startswith(r + '/')), '')
-        package = p[len(root) + 1 if root else 0:].split('/')[:-1]
+        roots = config.get('pythonRoots', ['', 'src'])
+        package = p.split('/')[:-1]
+        root = max((r for r in roots if r and p.startswith(r + '/')), key=len, default='')
+        package_depth = len(package) - (len(root.split('/')) if root else 0)
         try:
             tree = ast.parse(text)
         except SyntaxError:
@@ -97,13 +96,18 @@ def extract_imports(p, text, paths, config, parsed_js=None):
                     if hit:
                         out.append((hit, n.lineno))
             elif isinstance(n, ast.ImportFrom):
+                # Relative imports belong to this file's package, even when
+                # another source root contains a package with the same name.
+                if n.level > package_depth:
+                    continue
                 prefix = package[:len(package) - n.level + 1] if n.level else []
                 parts = prefix + (n.module.split('.') if n.module else [])
-                base = resolve_py(parts, paths, roots)
+                search_roots = [''] if n.level else roots
+                base = resolve_py(parts, paths, search_roots)
                 # A directly imported child module bypasses __init__, even if the
                 # package also re-exports a symbol with the same name.
                 for alias in n.names:
-                    child = resolve_py(parts + [alias.name], paths, roots)
+                    child = resolve_py(parts + [alias.name], paths, search_roots)
                     hit = child or base
                     if hit:
                         out.append((hit, n.lineno))
@@ -111,7 +115,7 @@ def extract_imports(p, text, paths, config, parsed_js=None):
         parsed_js = parsed_js if parsed_js is not None else parse_js_sources({p: text})[p]
         if parsed_js['invalid']:
             warnings.append('JavaScript/TypeScript syntax could not be fully parsed: ' + p)
-        aliases = config.get('aliases', {'@/': 'frontend/src/'})
+        aliases = config.get('aliases', {})
         for spec, line in parsed_js['imports']:
             if spec.startswith('.'):
                 base = os.path.normpath(str(PurePosixPath(p).parent / spec)).replace(os.sep, '/')
@@ -123,12 +127,12 @@ def extract_imports(p, text, paths, config, parsed_js=None):
             bases = [base]
             if base.endswith(('.js', '.mjs', '.jsx')):
                 bases.append(base.rsplit('.', 1)[0])
-            hit = next((b + ext for b in bases for ext in ('', '.ts', '.tsx', '.js', '.jsx', '.mjs', '/index.ts', '/index.tsx', '/index.js') if b + ext in paths), None)
+            hit = next((b + ext for b in bases for ext in ('', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '/index.ts', '/index.tsx', '/index.js', '/index.jsx', '/index.mjs', '/index.cjs') if b + ext in paths), None)
             if hit:
                 out.append((hit, line))
     return sorted(set((target, line) for target, line in out if target != p)), warnings
 
-def analyze(sources, config, modules=None):
+def analyze(sources, config, modules=None, importers=None):
     sources = {p: text for p, text in sources.items() if safe_path(p) and CODE.search(p) and not SKIP.search(p)}
     paths = set(sources)
     modules = modules if modules is not None else config['modules'] if 'modules' in config else infer_modules(paths)
@@ -138,8 +142,9 @@ def analyze(sources, config, modules=None):
         mod = module_map.get(f['district'])
         f['gate'] = bool(mod and any(fnmatch.fnmatchcase(p, pattern) for pattern in mod.get('public', [])))
     edges, shortcuts, warnings = [], [], []
-    parsed_js = parse_js_sources({p: text for p, text in sources.items() if not p.endswith('.py')})
-    for p, text in sources.items():
+    selected = sources if importers is None else {p: text for p, text in sources.items() if p in importers}
+    parsed_js = parse_js_sources({p: text for p, text in selected.items() if not p.endswith('.py')})
+    for p, text in selected.items():
         imports, failed = extract_imports(p, text, paths, config, parsed_js.get(p))
         warnings.extend(failed)
         seen = set()
@@ -153,16 +158,17 @@ def analyze(sources, config, modules=None):
             edges.append(edge)
             if a['district'] != b['district'] and b['district'] in module_map and not b['gate'] and not allowed:
                 shortcuts.append(edge)
+    outgoing_counts = collections.Counter(files[e['source']]['district'] for e in edges)
+    breach_counts = collections.Counter(files[e['source']]['district'] for e in shortcuts)
+    incoming_counts = collections.Counter(files[e['target']]['district'] for e in shortcuts)
     districts = []
     for group in sorted({f['district'] for f in files.values()}):
-        outgoing = [e for e in edges if files[e['source']]['district'] == group]
-        breaches = [e for e in shortcuts if files[e['source']]['district'] == group]
-        incoming = [e for e in shortcuts if files[e['target']]['district'] == group]
+        outgoing, breaches, incoming = outgoing_counts[group], breach_counts[group], incoming_counts[group]
         mod = module_map.get(group, {})
         districts.append({'id': group, 'name': group.split('/')[-1], 'walled': group in module_map,
                           'inferred': mod.get('inferred', False), 'public': mod.get('public', []),
-                          'outgoing': len(outgoing), 'shortcuts': len(breaches), 'incoming': len(incoming),
-                          'ratio': len(breaches) / len(outgoing) if outgoing else 0})
+                          'outgoing': outgoing, 'shortcuts': breaches, 'incoming': incoming,
+                          'ratio': breaches / outgoing if outgoing else 0})
     targets = collections.defaultdict(list)
     for e in shortcuts:
         targets[e['target']].append(e['source'])
@@ -175,6 +181,20 @@ class Repository:
     def __init__(self, path):
         self.path = Path(path).resolve()
         self.blobs = {}
+
+    def head(self):
+        """Return HEAD, or None for a valid checkout with an unborn branch."""
+        command = ['git', '-C', str(self.path)]
+        head = subprocess.run(command + ['rev-parse', '--verify', '--quiet', 'HEAD'], capture_output=True)
+        if head.returncode == 0:
+            return head.stdout.decode().strip()
+        branch = subprocess.run(command + ['symbolic-ref', '--quiet', 'HEAD'], capture_output=True)
+        if branch.returncode == 0:
+            exists = subprocess.run(command + ['show-ref', '--verify', '--quiet', branch.stdout.decode().strip()], capture_output=True)
+            if exists.returncode == 1:
+                return None
+        # Preserve the useful Git error for invalid repositories or broken refs.
+        return git(self.path, 'rev-parse', '--verify', 'HEAD').decode().strip()
 
     def tree(self, revision):
         result = {}
@@ -209,48 +229,59 @@ class Repository:
                 sources[p] = path.read_text(errors='replace')
         return sources
 
-def scan(repo, config, maximum=70, working=False):
+def scan(repo, config, maximum=70, working=False, maximum_records=100000):
+    if maximum < 2 or maximum > 366:
+        raise ValueError('maximum snapshots must be between 2 and 366')
+    if maximum_records < 1:
+        raise ValueError('maximum snapshot records must be positive')
     repo = Repository(repo)
-    head = git(repo.path, 'rev-parse', 'HEAD').decode().strip()
-    rows = git(repo.path, 'log', '--first-parent', '--reverse', '--format=%H %ct', head).decode().splitlines()
-    daily = {}
-    for row in rows:
-        sha, timestamp = row.split()
-        date = dt.datetime.fromtimestamp(int(timestamp), dt.timezone.utc).strftime('%Y-%m-%d')
-        daily[date] = (sha, int(timestamp))
-    dates = sorted(daily)
-    if len(dates) > maximum:
-        dates = [dates[round(i * (len(dates) - 1) / (maximum - 1))] for i in range(maximum)]
-    head_sources = repo.tree(head)
-    modules = config.get('modules', infer_modules(head_sources))
+    head = repo.head()
+    rows = git(repo.path, 'log', '--first-parent', '--reverse', '--format=%H %ct', head).decode().splitlines() if head else []
+    commits = [(sha, int(timestamp)) for sha, timestamp in (row.split() for row in rows)]
+    head_sources = repo.tree(head) if head else {}
+    # An unborn checkout still has a useful city: its current source files.
+    working_sources = repo.working() if working or head is None else None
+    modules = config.get('modules', infer_modules(set(head_sources) | set(working_sources or {})))
+    head_result = analyze(head_sources, config, modules)
+    records_per_snapshot = max(1, len(head_result['files']) + len(head_result['imports']))
+    budget_limit = max(2, maximum_records // records_per_snapshot - (working_sources is not None))
+    limit = min(maximum, budget_limit)
+    sampled = commits
+    if len(commits) > limit:
+        sampled = [commits[round(i * (len(commits) - 1) / (limit - 1))] for i in range(limit)]
     snapshots = []
     all_files, previous, last_changed = {}, {}, {}
     warnings = set()
-    for i, date in enumerate(dates):
-        sha, timestamp = daily[date]
+    if len(commits) > limit and budget_limit < maximum:
+        warnings.add('History sampled at %d commits using a %d file/import record budget estimated from HEAD; first and latest commits are retained.' % (limit, maximum_records))
+    for i, (sha, timestamp) in enumerate(sampled):
+        date = dt.datetime.fromtimestamp(timestamp, dt.timezone.utc).strftime('%Y-%m-%d')
         sources = repo.tree(sha)
-        result = analyze(sources, config, modules)
+        result = head_result if sha == head else analyze(sources, config, modules)
         warnings.update(result.pop('warnings'))
+        digests = {}
         for p, f in result['files'].items():
             digest = hashlib.sha256(sources[p].encode()).digest()
             if previous.get(p) != digest:
                 last_changed[p] = timestamp
             f['changed'] = last_changed[p]
-            previous[p] = digest
+            digests[p] = digest
             all_files[p] = {k: f[k] for k in ('path', 'district', 'gate')}
+        previous = digests
         snapshots.append({'date': date, 'timestamp': timestamp, 'revision': sha[:12], **result})
-        print('Scanning %s (%d/%d)' % (date, i + 1, len(dates)), file=sys.stderr)
-    if working:
-        result = analyze(repo.working(), config, modules)
+        print('Scanning %s %s (%d/%d)' % (date, sha[:12], i + 1, len(sampled)), file=sys.stderr)
+    if working_sources is not None:
+        result = analyze(working_sources, config, modules)
         warnings.update(result.pop('warnings'))
         timestamp = int(dt.datetime.now(dt.timezone.utc).timestamp())
         for p, f in result['files'].items():
-            f['changed'] = timestamp if snapshots[-1]['files'].get(p, {}).get('lines') != f['lines'] else last_changed.get(p, timestamp)
+            digest = hashlib.sha256(working_sources[p].encode()).digest()
+            f['changed'] = timestamp if previous.get(p) != digest else last_changed[p]
             all_files[p] = {k: f[k] for k in ('path', 'district', 'gate')}
         snapshots.append({'date': 'Working tree', 'timestamp': timestamp, 'revision': 'working', **result})
     # Strip every commit message, author name and email. Only time and changed
     # source paths survive. One dot is one commit, not a claim of agent identity.
-    log = git(repo.path, 'log', '--no-merges', '--reverse', '--format=@@%ct', '--name-only', head).decode(errors='replace')
+    log = git(repo.path, 'log', '--no-merges', '--reverse', '--format=@@%ct', '--name-only', head).decode(errors='replace') if head else ''
     changes = []
     for block in log.split('@@')[1:]:
         lines = block.splitlines()
@@ -262,15 +293,17 @@ def scan(repo, config, maximum=70, working=False):
             'coverage': 'Python and TypeScript ASTs. Static import strings are resolved locally; computed paths, external packages and runtime resolution may be missed.',
             'limitations': ['Boundary pressure is not a validated entropy or defect predictor.',
                            'Current gate definitions are applied to all snapshots; past intent is not inferred.',
-                           'Heat means changed since the previous sampled snapshot, not exact edit time.'],
+                           'Heat means changed since the previous sampled snapshot, not exact edit time.',
+                           'History sampling uses a HEAD-based file/import record budget, not a hard byte limit; at least the first and latest commits are retained.'],
             'warnings': sorted(warnings)}, 'files': list(all_files.values()), 'snapshots': snapshots, 'changes': changes}
 
 def check(repo, config, base='HEAD'):
     r = Repository(repo)
-    before_sources = r.tree(base)
-    modules = config.get('modules', infer_modules(before_sources))
+    before_sources = {} if base == 'HEAD' and r.head() is None else r.tree(base)
+    after_sources = r.working()
+    modules = config.get('modules', infer_modules(set(before_sources) | set(after_sources)))
     before = analyze(before_sources, config, modules)
-    after = analyze(r.working(), config, modules)
+    after = analyze(after_sources, config, modules)
     key = lambda e: (e['source'], e['target'])
     old, new = {key(e) for e in before['shortcuts']}, {key(e) for e in after['shortcuts']}
     return {'base': base, 'before': len(old), 'after': len(new),
@@ -285,12 +318,16 @@ def main():
     ap.add_argument('--config')
     ap.add_argument('--out', default='.strata/city.json')
     ap.add_argument('--max-snapshots', type=int, default=70)
+    ap.add_argument('--max-snapshot-records', type=int, default=100000,
+                    help='Approximate total file/import record budget, estimated from HEAD (default: 100000).')
     ap.add_argument('--working', action='store_true')
     ap.add_argument('--base', default='HEAD')
     ap.add_argument('--module')
     args = ap.parse_args()
     if args.max_snapshots < 2 or args.max_snapshots > 366:
         ap.error('--max-snapshots must be between 2 and 366')
+    if args.max_snapshot_records < 1:
+        ap.error('--max-snapshot-records must be positive')
     config = load_config(args.repo, args.config)
     if args.command == 'check':
         result = check(args.repo, config, args.base)
@@ -304,7 +341,7 @@ def main():
                       'desirePaths': [d for d in result['desirePaths'] if result['files'][d['target']]['district'] == args.module]}
         print(json.dumps(result, indent=2))
         return 0
-    result = scan(args.repo, config, args.max_snapshots, args.working)
+    result = scan(args.repo, config, args.max_snapshots, args.working, args.max_snapshot_records)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, separators=(',', ':')))

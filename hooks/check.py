@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Codex hook: compare pending apply_patch imports without writing any files."""
+"""Codex hook: preview supported edits without writing any repository files."""
 import json
 from pathlib import Path
 import subprocess
@@ -8,8 +8,24 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import Repository, analyze, check, load_config
 
-def patch_sources(sources, patch, repo):
+def repository_path(rawpath, repo, cwd=None):
+    """Resolve a tool path using its working directory, bounded to the repo."""
+    if not isinstance(rawpath, str) or not rawpath:
+        raise ValueError('Missing file path')
+    repo = Path(repo).resolve()
+    cwd = Path(cwd).resolve() if cwd is not None else repo
+    path = Path(rawpath)
+    if not path.is_absolute():
+        path = cwd / path
+    try:
+        return path.resolve().relative_to(repo).as_posix()
+    except ValueError:
+        raise ValueError('Edit includes a file outside the repository')
+
+def patch_sources(sources, patch, repo, cwd=None):
     """Apply Codex's textual patch to an in-memory source map, conservatively."""
+    if not isinstance(patch, str):
+        raise ValueError('Missing patch text')
     lines = patch.splitlines()
     if not lines or lines[0] != '*** Begin Patch' or lines[-1] != '*** End Patch':
         raise ValueError('Unrecognized patch format')
@@ -20,25 +36,13 @@ def patch_sources(sources, patch, repo):
         kind = next((k for k in ['Add', 'Update', 'Delete'] if header.startswith('*** ' + k + ' File: ')), None)
         if not kind:
             raise ValueError('Unsupported patch header')
-        rawpath = header.split(' File: ', 1)[1]
-        path = Path(rawpath)
-        if path.is_absolute():
-            try:
-                name = path.relative_to(repo).as_posix()
-            except ValueError:
-                raise ValueError('Patch includes a file outside the repository')
-        else:
-            if '..' in path.parts:
-                raise ValueError('Patch path escapes repository')
-            name = path.as_posix()
+        name = repository_path(header.split(' File: ', 1)[1], repo, cwd)
         i += 1
         moved = None
         if i < len(lines) and lines[i].startswith('*** Move to: '):
-            moved = lines[i].split(': ', 1)[1]
-            if Path(moved).is_absolute():
-                moved = Path(moved).relative_to(repo).as_posix()
-            if '..' in Path(moved).parts:
-                raise ValueError('Move path escapes repository')
+            if kind != 'Update':
+                raise ValueError('Only an update can move a file')
+            moved = repository_path(lines[i].split(': ', 1)[1], repo, cwd)
             i += 1
         content = []
         while i < len(lines) and not lines[i].startswith(('*** Add File:', '*** Update File:', '*** Delete File:', '*** End Patch')):
@@ -78,6 +82,38 @@ def patch_sources(sources, patch, repo):
         result[moved or name] = '\n'.join(original) + '\n'
     return result
 
+def preview_sources(sources, tool_name, tool_input, repo, cwd):
+    if tool_name == 'apply_patch':
+        if not isinstance(tool_input, (str, dict)):
+            raise ValueError('Unrecognized patch input')
+        patch = tool_input if isinstance(tool_input, str) else tool_input.get('command', tool_input.get('patch', ''))
+        return patch_sources(sources, patch, repo, cwd)
+    if not isinstance(tool_input, dict):
+        raise ValueError('Unrecognized edit input')
+    name = repository_path(tool_input.get('file_path'), repo, cwd)
+    result = dict(sources)
+    if tool_name == 'Write':
+        content = tool_input.get('content')
+        if not isinstance(content, str):
+            raise ValueError('Write requires text content')
+        result[name] = content
+        return result
+    old, new = tool_input.get('old_string'), tool_input.get('new_string')
+    if not isinstance(old, str) or not old or not isinstance(new, str):
+        raise ValueError('Edit requires non-empty old_string and text new_string')
+    replace_all = tool_input.get('replace_all', False)
+    if not isinstance(replace_all, bool):
+        raise ValueError('Edit replace_all must be a boolean')
+    if name not in result:
+        # Files absent from the scanner's source map cannot introduce imports
+        # through a replacement. New source files use Write or Add File.
+        return result
+    count = result[name].count(old)
+    if not count or (count != 1 and not replace_all):
+        raise ValueError('Edit text is missing or ambiguous')
+    result[name] = result[name].replace(old, new, -1 if replace_all else 1)
+    return result
+
 def evaluate(payload):
     cwd = payload.get('cwd', '.')
     p = subprocess.run(['git', '-C', cwd, 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
@@ -94,21 +130,30 @@ def evaluate(payload):
         result = check(repo, config)
         if result['added']:
             return {'decision': 'block', 'reason': reason(result['added'])}
+        if result['warnings']:
+            return {'systemMessage': 'Strata could not fully check the working tree: ' + '; '.join(result['warnings'][:8])}
         return {}
     if event != 'PreToolUse' or payload.get('tool_name') not in ('apply_patch', 'Edit', 'Write'):
         return {}
-    patch = payload.get('tool_input', {}).get('command', '')
     sources = Repository(repo).working()
-    before = analyze(sources, config)
     try:
-        proposed = patch_sources(sources, patch, repo)
+        proposed = preview_sources(sources, payload['tool_name'], payload.get('tool_input', {}), repo, cwd)
     except ValueError as error:
-        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'additionalContext': 'Strata could not preview this patch: %s. Run strata check after the edit.' % error}}
-    after = analyze(proposed, config)
+        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'additionalContext': 'Strata could not preview this edit: %s. Run strata check after the edit.' % error}}
+    if proposed == sources:
+        return {}
+    # With the same file paths, import resolution and inferred gates are stable.
+    # Only changed importers can introduce a new edge. Additions/deletions/moves
+    # need a full analysis because unchanged imports may resolve differently.
+    importers = {p for p in sources if sources[p] != proposed[p]} if sources.keys() == proposed.keys() else None
+    before = analyze(sources, config, importers=importers)
+    after = analyze(proposed, config, importers=importers)
     old = {(e['source'], e['target']) for e in before['shortcuts']}
     added = [e for e in after['shortcuts'] if (e['source'], e['target']) not in old]
     if added:
         return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', 'permissionDecisionReason': reason(added)}}
+    if after['warnings']:
+        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'additionalContext': 'Strata could not fully check this edit: ' + '; '.join(after['warnings'][:8]) + '. Run strata check after the edit.'}}
     return {}
 
 def reason(edges):

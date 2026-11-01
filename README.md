@@ -31,7 +31,7 @@ npm run demo
 STRATA_DATA=.local/demo-city.json STRATA_REPO="$PWD/.demo-repo" npm run dev
 ```
 
-The synthetic dates are illustrative; the fixture and generator were built during the hackathon. They are not a claim of earlier development activity.
+The fixture uses illustrative dates to make its history easy to explore.
 
 ## Declare module gates
 
@@ -39,30 +39,34 @@ The synthetic dates are illustrative; the fixture and generator were built durin
 {
   "name": "my-project",
   "private": true,
-  "pythonRoots": ["backend"],
+  "pythonRoots": ["src"],
   "modules": [
-    { "path": "backend/app/billing", "public": ["backend/app/billing/__init__.py"] },
-    { "path": "frontend/src/orders", "public": ["frontend/src/orders/index.ts"] }
+    { "path": "src/billing", "public": ["src/billing/__init__.py"] },
+    { "path": "ui/orders", "public": ["ui/orders/index.ts"] }
   ],
-  "allow": ["backend/app/routers/*"],
-  "aliases": { "@/": "frontend/src/" }
+  "allow": ["src/adapters/*"],
+  "aliases": { "@/": "ui/" }
 }
 ```
 
 Paths are repository-relative. Public paths and adapter exceptions accept glob patterns. Tests are exempt. Without declarations, package entry points are inferred and visibly labeled as hypotheses. Confirm those boundaries before treating a shortcut as something to fix.
 
+Inference recognizes packages such as `billing/` and `src/billing/` when they contain an entry point and another source file. Python absolute imports search the repository root and `src` by default; set `pythonRoots` for other layouts. Relative Python imports stay within the importing file's package. JavaScript aliases require explicit configuration. Source folders such as `data/` are included; dependency, build, and tool-state folders remain excluded.
+
 ```sh
-node bin/strata.mjs explain --repo /path/to/repo --module backend/app/billing
+node bin/strata.mjs explain --repo /path/to/repo --module src/billing
 node bin/strata.mjs check --repo /path/to/repo --base HEAD
 node bin/strata.mjs scan --repo /path/to/repo --working --out .local/city.json
 ```
 
-`check` exits 1 for newly added shortcuts and 2 if analysis fails. Existing shortcuts are reported but do not fail a change. `scan` follows first-parent history, samples up to 70 snapshots by default, and includes deleted files in the stable layout. `--max-snapshots` accepts 2–366.
+`check` exits 1 for newly added shortcuts and 2 if analysis fails. Existing shortcuts are reported but do not fail a change. In a repository without commits, `check` compares the working tree with an empty baseline, and `scan` shows the working tree.
+
+`scan` samples first-parent commits, including multiple commits on the same day, and keeps the first and latest commits. It uses up to 70 historical snapshots by default; `--max-snapshots` accepts 2–366. For larger repositories, a budget of 100,000 file/import records reduces the sample count. Adjust it with `--max-snapshot-records`. This is an estimate based on HEAD, not a hard byte limit. `--working` adds a current snapshot, and deleted files retain their plots in the layout.
 
 ## Codex and Decisions
 
-- **Investigate:** a local `codex app-server` uses your existing ChatGPT sign-in. It can read the named gate and source files in a read-only session. It does not edit the repository.
-- **Illustrate:** the app sends a screenshot of the real city to Codex’s built-in image generation. The output is an artistic interpretation, kept separate from measured facts. Included-plan image generation is verified; a specific Image 2.5 backend is **not claimed**.
+- **Investigate:** a local `codex app-server` uses your existing ChatGPT sign-in with a read-only sandbox and approvals disabled. Its instructions focus investigation on the named gate and source files.
+- **Illustrate:** the app sends a screenshot of the real city to Codex’s built-in image generation. The output is an artistic interpretation, kept separate from measured facts, using included-plan usage.
 - **Judge the gate:** optional Decisions API call with `gpt-6-luna`, using bounded import facts rather than repository source. Add `OPENAI_API_KEY=...` to `.env.local`. Never put the key in browser code. Repeated evidence is cached; the server caps requests at 50 per process and 40,000 request characters. This is a conservative request cap, not an account-wide dollar budget.
 
 The app-server process has `OPENAI_API_KEY` removed from its environment so these Codex actions do not accidentally use API-key billing. Ordinary Codex plan limits still apply.
@@ -77,7 +81,7 @@ codex plugin marketplace add .
 codex plugin add strata@strata-dev
 ```
 
-Review and trust the hooks in Codex before enabling them, then use a new session. The repository marketplace points at the generated `.local/strata-plugin` package. The pre-edit hook previews supported `apply_patch` calls in memory. Other write mechanisms require the stop check or an explicit `strata check`. A hook is not a security boundary, and Strata does not bypass Codex’s permission or trust controls.
+Review and trust the hooks in Codex before enabling them, then use a new session. The repository marketplace points at the generated `.local/strata-plugin` package. The pre-edit hook previews `apply_patch`, `Edit`, and `Write` calls in memory, resolving relative paths from the tool's working directory. It reparses changed importers when the source paths are unchanged; adding, deleting, or moving files requires a full comparison. Other write mechanisms require the stop check or an explicit `strata check`.
 
 Strata dogfoods declared gates for its own `core`, `server`, and `web` modules. See [the verified example](docs/codex-example.md).
 
@@ -90,9 +94,13 @@ Strata dogfoods declared gates for its own `core`, `server`, and `web` modules. 
 - Rings mark private files reached from at least two other districts.
 - Warmth means change since the preceding sampled snapshot. Activity dots trace actual commits, not asserted agent identities.
 
-Python and JS/TS imports use ASTs. Resolution covers local static paths, configured Python roots, and configured JS aliases. Computed imports, external packages, runtime path changes, and some language-specific resolution rules are outside this version’s coverage. Gate definitions from the current config apply to the whole window; the city does not infer historical design intent.
+## Limitations
+
+Python and JS/TS imports use ASTs. Resolution covers local static paths, configured Python roots, and configured JS aliases. Computed imports, external packages, runtime path changes, and some language-specific resolution rules are outside this version’s coverage. Gate definitions from the current config apply to the whole window; the city does not infer historical design intent. Large scans still load sampled file and import data into browser memory; reduce the sampling budget when needed.
 
 **There is no validated composite entropy score.** Import boundaries are observable signals. Decisions recommendations and generated illustrations are labeled as interpretation. Rework survival analysis, causal validation, reversals, and leftover-code detection are outside this release.
+
+The Codex sandbox restricts writes, not filesystem reads. Instructions to avoid credentials and unrelated files are model guidance, not an enforced read allowlist. Hooks are advisory integration checks, not a security boundary; installation and trust remain under Codex's controls. Included-plan image generation has been verified, but its exact Image 2.5 backend has not. Decisions request and response handling are tested offline against the documented contract; ordinary tests do not verify live account access or consume API credits.
 
 ## Privacy and static sharing
 

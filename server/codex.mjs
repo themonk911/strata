@@ -9,17 +9,39 @@ export class CodexClient extends EventEmitter {
   }
   async connect() {
     if (this.ready) return this.ready;
-    this.ready = this.initialize();
-    try { return await this.ready; } catch (error) { this.close(); throw error; }
+    const ready = this.initialize();
+    this.ready = ready;
+    try { return await ready; }
+    catch (error) {
+      // A failed initialization must not close a newer connection.
+      if (this.ready === ready) this.close();
+      throw error;
+    }
+  }
+  async status() {
+    if (!this.ready && Date.now() < this.statusRetryAt) throw this.statusError;
+    try {
+      const status = await this.connect();
+      this.statusError = null;
+      this.statusRetryAt = 0;
+      return status;
+    } catch (error) {
+      this.statusError = error;
+      this.statusRetryAt = Date.now() + 5000;
+      throw error;
+    }
   }
   async initialize() {
     // Do not let an API key accidentally change the subscription billing route.
     const env = { ...process.env }; delete env.OPENAI_API_KEY;
-    this.child = spawn(this.command, ['app-server', '--listen', 'stdio://'], { cwd: this.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
-    this.child.on('error', error => this.fail(error));
-    this.child.on('exit', () => this.fail(new Error('Codex app-server disconnected.')));
-    this.child.stderr.on('data', () => {}); // Never expose config or auth diagnostics to a browser.
-    createInterface({ input: this.child.stdout }).on('line', line => {
+    const child = spawn(this.command, ['app-server', '--listen', 'stdio://'], { cwd: this.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = child;
+    child.on('error', error => this.fail(error, child));
+    child.on('exit', () => this.fail(new Error('Codex app-server disconnected.'), child));
+    child.stdin.on('error', error => this.fail(error, child));
+    child.stderr.on('data', () => {}); // Never expose config or auth diagnostics to a browser.
+    createInterface({ input: child.stdout }).on('line', line => {
+      if (this.child !== child) return;
       let message; try { message = JSON.parse(line); } catch { return; }
       if (message.id !== undefined && !message.method) {
         const call = this.pending.get(message.id);
@@ -32,20 +54,40 @@ export class CodexClient extends EventEmitter {
       } else this.emit('notification', message);
     });
     await this.request('initialize', { clientInfo: { name: 'strata', title: 'Strata', version: '0.1.0' }, capabilities: { experimentalApi: true, requestAttestation: false } });
+    if (this.child !== child) throw new Error('Codex connection was closed during initialization.');
     this.send({ method: 'initialized', params: {} });
     const [account, capabilities] = await Promise.all([this.request('account/read', {}), this.request('modelProvider/capabilities/read', {})]);
+    if (this.child !== child) throw new Error('Codex connection was closed during initialization.');
     return { signedIn: Boolean(account.account), authType: account.account?.type, plan: account.account?.planType, imageGeneration: capabilities.imageGeneration };
   }
-  send(message) { this.child?.stdin.write(JSON.stringify(message) + '\n'); }
+  send(message) {
+    if (!this.child || this.child.killed || !this.child.stdin.writable) throw new Error('Codex app-server is not connected.');
+    this.child.stdin.write(JSON.stringify(message) + '\n');
+  }
   request(method, params, timeout = 30000) {
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Codex timed out: ' + method)); }, timeout);
-      this.pending.set(id, { resolve, reject, timer }); this.send({ id, method, params });
+      this.pending.set(id, { resolve, reject, timer });
+      try { this.send({ id, method, params }); }
+      catch (error) { this.pending.delete(id); clearTimeout(timer); reject(error); }
     });
   }
-  fail(error) { for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error); } this.pending.clear(); this.ready = null; this.emit('disconnected'); }
-  close() { this.child?.kill(); this.ready = null; }
+  fail(error, child = this.child) {
+    if (this.child !== child) return;
+    // Retire this process before killing it: late events belong to this
+    // connection and must never reject calls sent to a replacement process.
+    this.child = null;
+    this.ready = null;
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
+    this.emit('disconnected');
+    child?.kill();
+  }
+  close() { this.fail(new Error('Codex app-server connection closed.')); }
   async run({ prompt, imagePath, cwd, onEvent, timeout = 240000, inspectSource = false }) {
     const account = await this.connect();
     if (!account.signedIn || account.authType !== 'chatgpt') throw new Error('Run codex login with your ChatGPT account first. Strata does not use API billing for this action.');
