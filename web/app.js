@@ -55,7 +55,7 @@ function renderInspector() {
   $('district-entropy').innerHTML = entropyCard(d?.entropy, 'District entropy');
   if (!d) { $('gate-badge').textContent = ''; $('district-path').textContent = selected || ''; $('district-trend').innerHTML = ''; $('district-title').textContent = selected?.split('/').pop() || 'Choose a district'; $('district-meaning').textContent = 'This district does not exist at this point in history.'; $('incoming').textContent = '0'; $('desire-path').textContent = ''; $('gate-detail').textContent = ''; $('evidence-list').textContent = ''; return; }
   $('district-title').textContent = districtStyles.get(d.id)?.label || d.name.replaceAll('_', ' '); $('district-path').textContent = d.id;
-  $('gate-badge').textContent = d.walled ? d.inferred ? 'Inferred gate · review the boundary' : 'Declared public gate' : 'Open neighborhood';
+  $('gate-badge').textContent = d.gateStatus === 'unknown' ? 'Candidate boundary · public API unknown' : d.walled ? d.inferred ? 'Inferred gate · review the boundary' : 'Declared public gate' : 'Open neighborhood';
   $('incoming').textContent = d.incoming;
   const values = data.snapshots.map(s => s.districts.find(g => g.id === selected)?.incoming || 0);
   $('district-trend').innerHTML = `<path d="${chartPath(values, 120, 45)}" fill="none" stroke="var(--violet)" stroke-width="1.6"/><circle cx="${Math.round(current) / Math.max(1, values.length - 1) * 120}" cy="${45 - values[Math.round(current)] / Math.max(1, ...values) * 40}" r="3" fill="var(--violet)"/>`;
@@ -66,6 +66,8 @@ function renderInspector() {
   $('desire-path').innerHTML = desire ? `<span class="file-chip">${escape(desire.target.split('/').slice(-2).join('/'))}</span><p><b>${desire.sources.length} importers across ${desire.districts.length} districts.</b><br>A repeated need might deserve a place in the public API.</p>` : '<p>No private file is reached by two or more distinct districts here.</p>';
   $('gate-detail').textContent = d.public.length ? 'Gate → ' + d.public.map(p => p.split('/').pop()).join(', ') : 'Declare gates in strata.config.json';
   $('evidence-list').innerHTML = shortcuts.slice(0, 25).map(e => `<p>${escape(e.source)}:${e.line}<br><span class="violet">↳ ${escape(e.target)}</span></p>`).join('') || '<p>No detected shortcuts.</p>';
+  const candidates = (snapshot().boundaryCandidates || []).filter(e => snapshot().files[e.target]?.district === selected);
+  if (candidates.length) $('evidence-list').insertAdjacentHTML('beforeend', `<p><b>${candidates.length} ${candidates.length === 1 ? 'import crosses' : 'imports cross'} this candidate boundary.</b><br>The public API is unknown. Review these imports before declaring gates; they are not counted as shortcuts.</p>${candidates.slice(0, 25).map(e => `<p>${escape(e.source)}:${e.line}<br>↳ ${escape(e.target)}</p>`).join('')}`);
   if (shortcuts.length > 25) $('evidence-list').insertAdjacentHTML('beforeend', `<p>Showing 25 of ${shortcuts.length}. Full evidence is in the city JSON.</p>`);
   const references = (snapshot().inferredReferences || []).filter(e => snapshot().files[e.source]?.district === selected || snapshot().files[e.target]?.district === selected);
   if (references.length) $('evidence-list').insertAdjacentHTML('beforeend', `<p><b>${references.length} inferred Swift type links</b><br>Type-name matches guide layout; build targets and compiler resolution are not checked. Showing up to 25.</p>${references.slice(0, 25).map(e => `<p>${escape(e.source)}:${e.line}<br>↳ ${escape(e.target)}</p>`).join('')}`);

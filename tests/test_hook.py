@@ -42,6 +42,49 @@ class GateHook(unittest.TestCase):
         payload = {'cwd': str(self.root), 'hook_event_name': 'PreToolUse', 'tool_name': 'apply_patch', 'tool_input': {'command': '*** Begin Patch\n*** Add File: consumer.mjs\n+import { Client } from "./server/api.mjs";\n*** End Patch'}}
         self.assertEqual(hook.evaluate(payload), {})
 
+    def test_adding_inferred_api_keeps_existing_crossing_as_debt(self):
+        (self.root / 'strata.config.json').write_text('{}')
+        feature = self.root / 'features/billing'
+        feature.mkdir(parents=True)
+        (feature / 'store.ts').write_text('export const value = 1;\n')
+        (feature / 'model.ts').write_text('export const model = 1;\n')
+        (self.root / 'consumer.ts').write_text('import { value } from "./features/billing/store";\n')
+        self.commit()
+        payload = self.payload('Write', {'file_path': 'features/billing/api.ts',
+                                         'content': 'export { value } from "./store";\n'})
+        self.assertEqual(hook.evaluate(payload), {})
+        self.assertFalse((feature / 'api.ts').exists())
+
+    def test_inferred_public_to_private_import_change_is_still_denied(self):
+        (self.root / 'strata.config.json').write_text('{}')
+        consumer = self.root / 'consumer.mjs'
+        consumer.write_text('import { Client } from "./server/api.mjs";\n')
+        result = hook.evaluate(self.payload('Edit', {'file_path': 'consumer.mjs',
+            'old_string': './server/api.mjs', 'new_string': './server/internal.mjs'}))
+        self.assertEqual(result['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.assertIn('server/internal.mjs', result['hookSpecificOutput']['permissionDecisionReason'])
+        self.assertIn('./server/api.mjs', consumer.read_text())
+
+    def test_explicit_local_policy_checks_a_checkout_without_repository_config(self):
+        policy = self.root / '.git/strata-policy.json'
+        (self.root / 'strata.config.json').rename(policy)
+        payload = self.payload('Write', {'file_path': 'consumer.mjs', 'content': 'import "./server/internal.mjs";\n'})
+        self.assertEqual(hook.evaluate(payload), {})
+        self.assertEqual(hook.evaluate(payload, config_path=policy)['hookSpecificOutput']['permissionDecision'], 'deny')
+        with self.assertRaises(ValueError):
+            hook.evaluate(payload, config_path=self.root / 'missing.json')
+
+    def test_stop_scope_explicitly_leaves_swift_to_other_checks(self):
+        (self.root / 'View.swift').write_text('struct View {}\n')
+        self.commit()
+        payload = {'cwd': str(self.root), 'hook_event_name': 'Stop'}
+        self.assertIn('Swift', hook.evaluate(payload)['systemMessage'])
+        self.assertEqual(hook.evaluate(payload, languages=['python', 'javascript', 'typescript']), {})
+        allowed = self.payload('Write', {'file_path': 'consumer.mjs', 'content': 'import "./server/api.mjs";\n'})
+        self.assertEqual(hook.evaluate(allowed, languages=['python', 'javascript', 'typescript']), {})
+        unsupported = self.payload('Write', {'file_path': 'Other.swift', 'content': 'struct Other {}\n'})
+        self.assertIn('Swift', hook.evaluate(unsupported, languages=['python', 'javascript', 'typescript'])['hookSpecificOutput']['additionalContext'])
+
     def test_multiline_replacement_and_move(self):
         sources = {'a.py': 'a = 1\nb = 2\nc = 3\n'}
         patch = '*** Begin Patch\n*** Update File: a.py\n*** Move to: b.py\n@@\n a = 1\n-b = 2\n+b = 4\n c = 3\n*** End Patch'

@@ -19,7 +19,7 @@ export function openBoundaries({ api, refreshCity }) {
         <div class="boundary-modules"></div>
         <p class="boundary-empty" hidden>No declared modules. Add a module below, or save an empty list to leave all folders open.</p>
         <button type="button" class="secondary-button boundary-add" data-add>+ Add module</button>
-        <details class="boundary-suggestions" hidden><summary>Inferred suggestions <span data-suggestion-count></span></summary><p>These package entry points are hypotheses. Add only the boundaries that match your intended design.</p><div data-suggestions></div></details>
+        <details class="boundary-suggestions" hidden><summary>Inferred suggestions <span data-suggestion-count></span></summary><p>These folders and entry points are hypotheses. A missing entry point means the public API is unknown. Saving an empty gate list explicitly makes that module private.</p><div data-suggestions></div></details>
       </fieldset>
       <section class="boundary-preview" aria-labelledby="boundary-preview-title">
         <div class="boundary-section-heading"><h3 id="boundary-preview-title">Preview</h3><span class="boundary-scope">Current working tree</span></div>
@@ -115,7 +115,7 @@ export function openBoundaries({ api, refreshCity }) {
       fields.append(datalist);
       $('.boundary-suggestions').hidden = !policy.suggestions.length;
       $('[data-suggestion-count]').textContent = policy.suggestions.length;
-      $('[data-suggestions]').innerHTML = policy.suggestions.map(m => `<div class="boundary-suggestion"><div><code>${escape(m.path)}</code><span>${escape(m.public.join(', '))}</span></div><button type="button" class="secondary-button" data-suggestion="${escape(m.path)}">Add module</button></div>`).join('');
+      $('[data-suggestions]').innerHTML = policy.suggestions.map(m => `<div class="boundary-suggestion"><div><code>${escape(m.path)}</code><span>${escape(m.public.join(', ') || 'Public API unknown — review before saving')}</span></div><button type="button" class="secondary-button" data-suggestion="${escape(m.path)}">Add module</button></div>`).join('');
       for (const button of dialog.querySelectorAll('[data-suggestion]')) button.onclick = () => {
         addRow(policy.suggestions.find(m => m.path === button.dataset.suggestion), true); changed();
       };

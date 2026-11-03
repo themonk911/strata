@@ -55,24 +55,42 @@ def load_config(repo, explicit=None):
     return config
 
 def infer_modules(paths, roots=('', 'src')):
-    """Infer outer package gates, leaving nested packages inside their owner."""
+    """Suggest ownership from directory conventions, never from existing imports.
+
+    A missing conventional entry point means the public contract is unknown,
+    not that the inferred boundary has been confirmed as private.
+    """
+    paths = {p for p in paths if safe_path(p) and CODE.search(p) and not SKIP.search(p) and not TEST.search(p)}
     modules = {}
     counts = collections.Counter(parent.as_posix() for p in paths for parent in PurePosixPath(p).parents)
+    containers = {'components', 'features', 'packages'}
+    implementation = {'bin', 'scripts', 'lib', 'src', 'test', 'tests', '__tests__'}
+    for folder, count in sorted(counts.items()):
+        path = PurePosixPath(folder)
+        if (count >= 2 and path.parent.name in containers and path.name not in implementation
+                and folder not in roots):
+            modules[folder] = {'path': folder, 'public': [], 'inferred': True,
+                               'inference': 'directory convention; public entry points unknown'}
     for p in sorted(paths):
-        if not p.endswith(('/__init__.py', '/index.ts', '/index.tsx', '/index.mts', '/index.cts', '/index.js', '/index.jsx', '/index.mjs', '/index.cjs')):
+        path = PurePosixPath(p)
+        folder = path.parent.as_posix()
+        # A command named index is not a barrel. Keep commands with their owner.
+        if path.parent.name in {'bin', 'scripts'}:
             continue
-        folder = p.rsplit('/', 1)[0]
-        if TEST.search(p):
+        conventional = path.name == '__init__.py' or (path.suffix not in {'.py', '.swift'} and path.stem in {'index', 'api', 'public'})
+        named_component = folder in modules and path.stem == path.parent.name and path.suffix in {'.ts', '.tsx', '.js', '.jsx'}
+        if not conventional and not named_component:
             continue
         # Source roots are containers, even when they have an entry point.
         # Keep feature packages under src visible without walling every nested
         # implementation package within a feature.
-        if folder in roots or PurePosixPath(folder).name == 'src':
+        if folder in roots or path.parent.name == 'src' or folder == '.':
             continue
         if counts[folder] >= 2:
             module = modules.setdefault(folder, {'path': folder, 'public': [], 'inferred': True})
             module['public'].append(p)
-    return [module for folder, module in modules.items()
+            module['inference'] = 'conventional public entry point'
+    return [module for folder, module in sorted(modules.items())
             if not any(parent.as_posix() in modules for parent in PurePosixPath(folder).parents)]
 
 def module_for(p, modules):
@@ -158,11 +176,12 @@ def analyze(sources, config, modules=None, importers=None, import_cache=None):
     paths = set(sources)
     modules = modules if modules is not None else config['modules'] if 'modules' in config else infer_modules(paths, config.get('pythonRoots', ('', 'src')))
     module_map = {m['path']: m for m in modules}
+    unknown_gates = {m['path'] for m in modules if m.get('inferred') and not m.get('public')}
     files = {p: {'path': p, 'district': module_for(p, modules), 'lines': len(t.splitlines()), 'gate': False} for p, t in sources.items()}
     for p, f in files.items():
         mod = module_map.get(f['district'])
         f['gate'] = bool(mod and any(fnmatch.fnmatchcase(p, pattern) for pattern in mod.get('public', [])))
-    edges, shortcuts, warnings = [], [], []
+    edges, shortcuts, boundary_candidates, warnings = [], [], [], []
     selected = sources if importers is None else {p: text for p, text in sources.items() if p in importers}
     parsed_js = parse_js_sources({p: text for p, text in selected.items() if not p.endswith(('.py', '.swift')) and (import_cache is None or p not in import_cache)})
     # Swift names are heuristic relationships, never resolved imports or gates.
@@ -190,7 +209,9 @@ def analyze(sources, config, modules=None, importers=None, import_cache=None):
             edge = {'source': p, 'target': target, 'line': line}
             edges.append(edge)
             if a['district'] != b['district'] and b['district'] in module_map and not b['gate'] and not allowed:
-                shortcuts.append(edge)
+                # Directory shape suggests ownership, not a private contract.
+                # Only a recognized gate or a declaration can establish a shortcut.
+                (boundary_candidates if b['district'] in unknown_gates else shortcuts).append(edge)
     outgoing_counts = collections.Counter(files[e['source']]['district'] for e in edges)
     breach_counts = collections.Counter(files[e['source']]['district'] for e in shortcuts)
     incoming_counts = collections.Counter(files[e['target']]['district'] for e in shortcuts)
@@ -198,8 +219,10 @@ def analyze(sources, config, modules=None, importers=None, import_cache=None):
     for group in sorted({f['district'] for f in files.values()}):
         outgoing, breaches, incoming = outgoing_counts[group], breach_counts[group], incoming_counts[group]
         mod = module_map.get(group, {})
-        districts.append({'id': group, 'name': group.split('/')[-1], 'walled': group in module_map,
+        districts.append({'id': group, 'name': group.split('/')[-1], 'walled': group in module_map and group not in unknown_gates,
                           'inferred': mod.get('inferred', False), 'public': mod.get('public', []),
+                          'gateStatus': 'unknown' if group in unknown_gates else 'inferred' if mod.get('inferred') else 'declared' if group in module_map else 'unbounded',
+                          **({'inference': mod['inference']} if 'inference' in mod else {}),
                           'outgoing': outgoing, 'shortcuts': breaches, 'incoming': incoming,
                           'ratio': breaches / outgoing if outgoing else 0})
     targets = collections.defaultdict(list)
@@ -209,7 +232,7 @@ def analyze(sources, config, modules=None, importers=None, import_cache=None):
                for p, src in targets.items() if len({files[s]['district'] for s in src}) >= 2]
     desires.sort(key=lambda d: (-len(d['districts']), -len(d['sources']), d['target']))
     return {'files': files, 'districts': districts, 'imports': edges, 'inferredReferences': references,
-            'shortcuts': shortcuts, 'desirePaths': desires, 'warnings': warnings}
+            'shortcuts': shortcuts, 'boundaryCandidates': boundary_candidates, 'desirePaths': desires, 'warnings': warnings}
 
 class Repository:
     def __init__(self, path):
@@ -240,6 +263,30 @@ class Repository:
             p = rawpath.decode('utf-8', 'replace')
             if kind == 'blob' and mode != '120000' and CODE.search(p) and not SKIP.search(p):
                 result[p] = sha
+        return self._read_blobs(result)
+
+    def index(self):
+        """Read the next commit's source blobs without materializing its tree."""
+        result = {}
+        for entry in git(self.path, 'ls-files', '--stage', '-z').split(b'\0'):
+            if not entry:
+                continue
+            info, rawpath = entry.split(b'\t', 1)
+            mode, sha, stage = info.decode().split()
+            p = rawpath.decode('utf-8', 'replace')
+            if stage != '0':
+                raise ValueError('Cannot check an unmerged Git index: ' + p)
+            if mode in ('100644', '100755') and CODE.search(p) and not SKIP.search(p):
+                result[p] = sha
+        # Intent-to-add entries have empty blobs but do not enter a commit.
+        # Cached name-only diffs read the index; no checkout or write-tree is used.
+        visible = set(git(self.path, 'diff', '--cached', '--name-only', '-z', '--no-ext-diff', '--no-textconv', '--ita-visible-in-index').split(b'\0'))
+        staged = set(git(self.path, 'diff', '--cached', '--name-only', '-z', '--no-ext-diff', '--no-textconv', '--ita-invisible-in-index').split(b'\0'))
+        for rawpath in visible - staged:
+            result.pop(rawpath.decode('utf-8', 'replace'), None)
+        return self._read_blobs(result)
+
+    def _read_blobs(self, result):
         missing = list(set(result.values()) - self.blobs.keys())
         if missing:
             raw = git(self.path, 'cat-file', '--batch', data=('\n'.join(missing) + '\n').encode())
@@ -374,33 +421,66 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000, histor
                 'sampled': len(sampled) < len(commits),
                 'limitedByRecordBudget': budget_limit < min(maximum, len(commits))}
     return {'schemaVersion': 1, 'meta': {'name': config.get('name', repo.path.name), 'private': config.get('private', True),
-            'revision': head, 'entropy': entropy_meta, 'sampling': sampling, 'gatePolicy': 'declared' if 'modules' in config and not any(m.get('inferred') for m in modules) else 'inferred from current package entry points',
+            'revision': head, 'entropy': entropy_meta, 'sampling': sampling, 'gatePolicy': 'declared' if 'modules' in config and not any(m.get('inferred') for m in modules) else 'inferred from directory conventions and public entry points',
             'coverage': 'Python and JS/TS imports use ASTs. Swift files contribute size, activity, rework, scatter and change diffs; type-name references are inferred for layout only, not resolved imports or gate checks. Swift build targets, type checking, macros and conditional compilation are not resolved. Computed imports, external packages and runtime resolution may be missed.',
             'limitations': ['Boundary pressure is not a validated entropy or defect predictor.',
+                           'Inferred boundaries are hypotheses. With no recognized public entry point, incoming imports are review candidates, not confirmed violations.',
                            'Current gate definitions are applied to all snapshots; past intent is not inferred.',
                            'Heat means changed since the previous sampled snapshot, not exact edit time.',
                            'History sampling uses a HEAD-based file/import record budget, not a hard byte limit; at least the first and latest commits are retained.'],
             'warnings': sorted(warnings)}, 'files': list(all_files.values()), 'snapshots': snapshots, 'changes': changes}
 
-def check(repo, config, base='HEAD'):
+def compare_imports(before_sources, after_sources, config, importers=None, modules=None):
+    """Compare imports under one policy, including newly inferred entry points."""
+    if modules is None:
+        modules = config['modules'] if 'modules' in config else infer_modules(
+            set(before_sources) | set(after_sources), config.get('pythonRoots', ('', 'src')))
+    before = analyze(before_sources, config, modules, importers=importers)
+    after = analyze(after_sources, config, modules, importers=importers)
+    key = lambda edge: (edge['source'], edge['target'])
+    old, new = {key(edge) for edge in before['shortcuts']}, {key(edge) for edge in after['shortcuts']}
+    return {'before': len(old), 'after': len(new),
+            'added': [edge for edge in after['shortcuts'] if key(edge) not in old],
+            'removed': [edge for edge in before['shortcuts'] if key(edge) not in new],
+            'warnings': sorted(set(before['warnings'] + after['warnings'])),
+            'gates': {'enforced': sum(not module.get('inferred') or bool(module.get('public')) for module in modules),
+                      'unknown': sum(bool(module.get('inferred')) and not module.get('public') for module in modules)}}
+
+def check(repo, config, base='HEAD', staged=False, languages=None):
+    """Compare source imports using current rules and an explicit check scope."""
+    extensions = {'python': ('.py',), 'javascript': ('.js', '.jsx', '.mjs', '.cjs'),
+                  'typescript': ('.ts', '.tsx', '.mts', '.cts'), 'swift': ('.swift',)}
+    if not isinstance(staged, bool):
+        raise ValueError('staged must be a boolean')
+    if languages is not None and (not isinstance(languages, (list, tuple, set, frozenset)) or not languages or
+                                  any(not isinstance(language, str) or language not in extensions for language in languages)):
+        raise ValueError('languages must be a non-empty collection of python, javascript, typescript, or swift')
+    selected = set(extensions if languages is None else languages)
+    suffixes = tuple(suffix for language in selected for suffix in extensions[language])
     r = Repository(repo)
     before_sources = {} if base == 'HEAD' and r.head() is None else r.tree(base)
-    after_sources = r.working()
+    after_sources = r.index() if staged else r.working()
+    paths = before_sources.keys() | after_sources.keys()
+    excluded = {language: sum(path.endswith(suffixes) for path in paths)
+                for language, suffixes in extensions.items() if language not in selected}
+    excluded = {language: count for language, count in excluded.items() if count}
     modules = config.get('modules', infer_modules(set(before_sources) | set(after_sources), config.get('pythonRoots', ('', 'src'))))
-    before = analyze(before_sources, config, modules)
-    after = analyze(after_sources, config, modules)
-    key = lambda e: (e['source'], e['target'])
-    old, new = {key(e) for e in before['shortcuts']}, {key(e) for e in after['shortcuts']}
-    if any(p.endswith('.swift') for p in before_sources.keys() | after_sources.keys()):
-        after['warnings'].append('Swift import and boundary checks are unavailable; inferred type references are for layout only.')
-    return {'base': base, 'before': len(old), 'after': len(new),
-            'added': [e for e in after['shortcuts'] if key(e) not in old],
-            'removed': [e for e in before['shortcuts'] if key(e) not in new],
-            'warnings': sorted(set(before['warnings'] + after['warnings']))}
+    # Keep other supported languages available as import targets and gates.
+    # Swift has no resolved imports; excluded Swift must not run lexical checks.
+    if 'swift' not in selected:
+        before_sources = {path: source for path, source in before_sources.items() if not path.endswith('.swift')}
+        after_sources = {path: source for path, source in after_sources.items() if not path.endswith('.swift')}
+    importers = {path for path in paths if path.endswith(suffixes)}
+    result = compare_imports(before_sources, after_sources, config, importers=importers, modules=modules)
+    if 'swift' in selected and any(p.endswith('.swift') for p in paths):
+        result['warnings'] = sorted(set(result['warnings'] + ['Swift import and boundary checks are unavailable; inferred type references are for layout only.']))
+    return {'base': base, 'source': 'index' if staged else 'working tree',
+            'scope': {'languages': [language for language in extensions if language in selected], 'excluded': excluded},
+            **result}
 
 def main():
     ap = argparse.ArgumentParser(description='Strata: a read-only city of your git history.')
-    ap.add_argument('command', nargs='?', choices=['scan', 'check', 'explain'], default='scan')
+    ap.add_argument('command', nargs='?', choices=['scan', 'check', 'explain', 'gates'], default='scan')
     ap.add_argument('--repo', default='.')
     ap.add_argument('--config')
     ap.add_argument('--out', default='.strata/city.json')
@@ -411,15 +491,28 @@ def main():
     ap.add_argument('--history-analysis', action='store_true',
                     help='Replay every first-parent commit for rework, scatter, and shortcut-age signals (slower).')
     ap.add_argument('--base', default='HEAD')
+    ap.add_argument('--staged', action='store_true',
+                    help='Check source from the Git index instead of the working tree; current configuration still applies.')
+    ap.add_argument('--languages', nargs='+', choices=['python', 'javascript', 'typescript', 'swift'],
+                    help='Check imports from these languages only; excluded file counts are reported explicitly.')
     ap.add_argument('--module')
     args = ap.parse_args()
     if args.max_snapshots < 2 or args.max_snapshots > 366:
         ap.error('--max-snapshots must be between 2 and 366')
     if args.max_snapshot_records < 1:
         ap.error('--max-snapshot-records must be positive')
+    if (args.staged or args.languages is not None) and args.command != 'check':
+        ap.error('--staged and --languages require check')
     config = load_config(args.repo, args.config)
+    if args.command == 'gates':
+        if __package__:
+            from .gate_graph import gate_evidence
+        else:
+            from gate_graph import gate_evidence
+        print(json.dumps(gate_evidence(args.repo, config, module=args.module), indent=2))
+        return 0
     if args.command == 'check':
-        result = check(args.repo, config, args.base)
+        result = check(args.repo, config, args.base, staged=args.staged, languages=args.languages)
         print(json.dumps(result, indent=2))
         return 2 if result['warnings'] else 1 if result['added'] else 0
     if args.command == 'explain':
@@ -427,6 +520,7 @@ def main():
         if args.module:
             result = {'district': next((d for d in result['districts'] if d['id'] == args.module), None),
                       'shortcuts': [e for e in result['shortcuts'] if args.module in (result['files'][e['source']]['district'], result['files'][e['target']]['district'])],
+                      'boundaryCandidates': [e for e in result['boundaryCandidates'] if args.module in (result['files'][e['source']]['district'], result['files'][e['target']]['district'])],
                       'desirePaths': [d for d in result['desirePaths'] if result['files'][d['target']]['district'] == args.module]}
         print(json.dumps(result, indent=2))
         return 0

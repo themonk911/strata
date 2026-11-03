@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Codex hook: preview supported edits without writing any repository files."""
+import argparse
 import json
 from pathlib import Path
 import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from core import Repository, analyze, check, load_config
+from core import Repository, check, compare_imports, load_config
 
 def repository_path(rawpath, repo, cwd=None):
     """Resolve a tool path using its working directory, bounded to the repo."""
@@ -114,20 +115,22 @@ def preview_sources(sources, tool_name, tool_input, repo, cwd):
     result[name] = result[name].replace(old, new, -1 if replace_all else 1)
     return result
 
-def evaluate(payload):
+def evaluate(payload, config_path=None, languages=None):
     cwd = payload.get('cwd', '.')
     p = subprocess.run(['git', '-C', cwd, 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
     if p.returncode:
         return {}
     repo = Path(p.stdout.strip()).resolve()
-    if not (repo / 'strata.config.json').exists():
+    if config_path is None and not (repo / 'strata.config.json').exists():
         return {}
-    config = load_config(repo)
+    if config_path is not None and not Path(config_path).is_file():
+        raise ValueError('Configured Strata policy does not exist')
+    config = load_config(repo, config_path)
     event = payload.get('hook_event_name')
     if event == 'Stop':
         if payload.get('stop_hook_active'):
             return {}
-        result = check(repo, config)
+        result = check(repo, config, languages=languages)
         if result['added']:
             return {'decision': 'block', 'reason': reason(result['added'])}
         if result['warnings']:
@@ -147,24 +150,30 @@ def evaluate(payload):
     # need a full analysis because unchanged imports may resolve differently.
     changed = {p for p in sources.keys() | proposed.keys() if sources.get(p) != proposed.get(p)}
     importers = changed if sources.keys() == proposed.keys() else None
-    before = analyze(sources, config, importers=importers)
-    after = analyze(proposed, config, importers=importers)
-    old = {(e['source'], e['target']) for e in before['shortcuts']}
-    added = [e for e in after['shortcuts'] if (e['source'], e['target']) not in old]
-    if added:
-        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', 'permissionDecisionReason': reason(added)}}
-    if not after['warnings'] and any(p.endswith('.swift') for p in changed):
-        after['warnings'].append('Swift import and boundary checks are unavailable; inferred type references are for layout only.')
-    if after['warnings']:
-        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'additionalContext': 'Strata could not fully check this edit: ' + '; '.join(after['warnings'][:8]) + '. Run strata check after the edit.'}}
+    if languages is not None and 'swift' not in languages:
+        # Keep the explicit Stop scope from producing unrelated Swift warnings
+        # on every JS edit. Edits to Swift itself are still disclosed below.
+        sources = {p: text for p, text in sources.items() if not p.endswith('.swift')}
+        proposed = {p: text for p, text in proposed.items() if not p.endswith('.swift')}
+    result = compare_imports(sources, proposed, config, importers=importers)
+    if result['added']:
+        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', 'permissionDecisionReason': reason(result['added'])}}
+    if not result['warnings'] and any(p.endswith('.swift') for p in changed):
+        result['warnings'].append('Swift import and boundary checks are unavailable; inferred type references are for layout only.')
+    if result['warnings']:
+        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'additionalContext': 'Strata could not fully check this edit: ' + '; '.join(result['warnings'][:8]) + '. Run strata check after the edit.'}}
     return {}
 
 def reason(edges):
-    return 'Strata found new imports past a declared gate: ' + '; '.join('%s:%s -> %s' % (e['source'], e['line'], e['target']) for e in edges[:8]) + '. Use the owning module\'s public API, or expose a narrow operation through its gate. Do not widen the configuration just to silence this check. Verify behavior and rerun Strata.'
+    return 'Strata found new imports past a module gate: ' + '; '.join('%s:%s -> %s' % (e['source'], e['line'], e['target']) for e in edges[:8]) + '. Inferred gates are hypotheses: confirm the intended boundary. Use the owning module\'s public API, or expose a narrow operation through its gate. Do not widen the configuration just to silence this check. Verify behavior and rerun Strata.'
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--config', help='Use an explicit local boundary policy, including from a linked worktree.')
+    parser.add_argument('--languages', nargs='+', choices=['python', 'javascript', 'typescript', 'swift'], help='Limit the Stop import check to these languages. Pre-edit checks still report unsupported edits.')
+    args = parser.parse_args()
     try:
-        print(json.dumps(evaluate(json.load(sys.stdin))))
+        print(json.dumps(evaluate(json.load(sys.stdin), config_path=args.config, languages=args.languages)))
     except Exception as error:
         # A diagnostic is explicit; it is not represented as a successful scan.
         print(json.dumps({'systemMessage': 'Strata check unavailable: ' + str(error)[:250]}))

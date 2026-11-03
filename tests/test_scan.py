@@ -156,6 +156,58 @@ class Boundaries(unittest.TestCase):
         self.assertEqual(self.imports('src/a.ts', 'import "@/b";', paths, {'aliases': {'@/': 'frontend/src/'}})[0], [('frontend/src/b.ts', 1)])
         self.assertEqual(self.imports('main.py', 'import billing.core', paths, {'pythonRoots': ['backend']})[0], [('backend/billing/core.py', 1)])
 
+    def test_component_commands_and_library_share_one_inferred_owner(self):
+        files = {'components/billing/bin/index.ts': 'import "../lib/billing";',
+                 'components/billing/lib/billing.ts': 'export const billing = [];',
+                 'components/orders/bin/run.ts': 'import "../../billing/lib/billing";',
+                 'components/orders/lib/messages.ts': ''}
+        result = analyze(files, {})
+        candidates = {d['id']: d for d in result['districts'] if d['inferred']}
+        self.assertEqual(set(candidates), {'components/billing', 'components/orders'})
+        self.assertTrue(all(not d['walled'] and d['gateStatus'] == 'unknown' for d in candidates.values()))
+        self.assertEqual(result['shortcuts'], [])
+        self.assertEqual(result['boundaryCandidates'], [{'source': 'components/orders/bin/run.ts',
+                                                       'target': 'components/billing/lib/billing.ts', 'line': 1}])
+        self.assertFalse(result['files']['components/billing/bin/index.ts']['gate'])
+        declared = analyze(files, {'modules': [{'path': 'components/billing', 'public': []}]})
+        self.assertEqual(declared['shortcuts'], result['boundaryCandidates'])
+        self.assertEqual(declared['boundaryCandidates'], [])
+
+    def test_named_api_is_a_gate_and_nested_implementation_stays_with_its_owner(self):
+        files = {'server/features/catalog/api.ts': 'export * from "./internal/store";',
+                 'server/features/catalog/internal/store.ts': 'export const value = 1;',
+                 'server/features/catalog/components/card/index.ts': '',
+                 'server/features/catalog/components/card/view.ts': '',
+                 'server/routes.ts': 'import "./features/catalog/api";'}
+        result = analyze(files, {})
+        self.assertEqual({d['id'] for d in result['districts'] if d['walled']}, {'server/features/catalog'})
+        self.assertTrue(result['files']['server/features/catalog/api.ts']['gate'])
+        self.assertEqual(result['shortcuts'], [])
+
+    def test_named_react_component_can_be_a_gate(self):
+        result = analyze({'src/components/Button/Button.tsx': 'export default function Button() {}',
+                          'src/components/Button/styles.ts': '',
+                          'src/App.tsx': 'import Button from "./components/Button/Button";'}, {})
+        self.assertTrue(result['files']['src/components/Button/Button.tsx']['gate'])
+        self.assertEqual(result['shortcuts'], [])
+
+    def test_tests_and_commands_do_not_create_standalone_boundaries(self):
+        files = {'bin/index.ts': '', 'bin/command.ts': '',
+                 'scripts/index.py': '', 'scripts/run.py': '',
+                 'tests/features/catalog/api.ts': '', 'tests/features/catalog/store.ts': '',
+                 'components/only-test/main.ts': '', 'components/only-test/main.test.ts': ''}
+        self.assertFalse(any(d['walled'] for d in analyze(files, {})['districts']))
+
+    def test_declared_boundaries_override_directory_hypotheses(self):
+        files = {'packages/app/features/catalog/api.ts': '',
+                 'packages/app/features/catalog/private.ts': ''}
+        result = analyze(files, {})
+        self.assertEqual({d['id'] for d in result['districts'] if d['inferred']}, {'packages/app'})
+        declared = analyze(files, {'modules': [{'path': 'packages/app/features/catalog',
+                                               'public': ['packages/app/features/catalog/api.ts']}]})
+        self.assertEqual({d['id'] for d in declared['districts'] if d['walled']}, {'packages/app/features/catalog'})
+        self.assertFalse(any(d['inferred'] for d in declared['districts']))
+
     def test_relative_python_import_stays_in_its_source_root(self):
         paths = {'src/billing/a.py', 'src/billing/b.py', 'src/billing/__init__.py',
                  'backend/billing/b.py', 'backend/billing/__init__.py'}
