@@ -81,6 +81,27 @@ class CommitChecks(unittest.TestCase):
         self.git('add', 'second.py')
         self.assertEqual([edge['source'] for edge in check(self.repo, {}, staged=True)['added']], ['second.py'])
 
+    def test_merge_keeps_other_parents_shortcuts_as_debt_but_blocks_new_ones(self):
+        self.boundary()
+        self.commit()
+        branch = self.git('branch', '--show-current')
+        self.git('worktree', 'add', '-qb', 'feature', str(self.repo / 'linked'))
+        (self.repo / 'linked/feature.py').write_text('value = 2\n')
+        subprocess.check_call(['git', '-C', str(self.repo / 'linked'), 'add', 'feature.py'])
+        subprocess.check_call(['git', '-C', str(self.repo / 'linked'), 'commit', '-qm', 'feature'])
+        self.write('main.py', 'from billing.core import value\n')
+        self.commit()
+        for checkout, other in [(self.repo, 'feature'), (self.repo / 'linked', branch)]:
+            with self.subTest(checkout=checkout.name):
+                subprocess.check_call(['git', '-C', str(checkout), 'merge', '-q', '--no-ff', '--no-commit', other])
+                merged = check(checkout, {}, staged=True)
+                self.assertEqual(merged['added'], [])
+                self.assertEqual(len(merged['merged']), 1)
+                (checkout / 'resolved.py').write_text('from billing.core import value\n')
+                subprocess.check_call(['git', '-C', str(checkout), 'add', 'resolved.py'])
+                self.assertEqual([edge['source'] for edge in check(checkout, {}, staged=True)['added']], ['resolved.py'])
+                subprocess.check_call(['git', '-C', str(checkout), 'merge', '--abort'])
+
     def test_initial_commit_compares_index_to_empty_baseline(self):
         self.boundary(private=True)
         self.assertEqual(check(self.repo, {}, staged=True)['added'], [])
