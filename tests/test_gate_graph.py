@@ -87,6 +87,31 @@ class GateGraphEvidence(unittest.TestCase):
         self.assertEqual(result['coverage']['excludedTestFiles'], 1)
         self.assertEqual(result['coverage']['uncheckedSwiftFiles'], 1)
 
+    def test_one_off_callers_do_not_establish_gates_but_runtime_imports_remain(self):
+        self.facade()
+        migration = 'migrations/2026-11-05-records.ts'
+        self.write(migration, 'import { value } from "../billing/store";\n')
+        self.write('migrations/runner.ts', 'import { value } from "../billing/model";\n')
+        self.write('app/migration.ts', 'import "../' + migration + '";\n')
+        pattern = 'migrations/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.ts'
+        config = {'allow': [pattern]}
+        self.assertIn('billing/store.ts', self.candidates(self.evidence(config=config)))
+        before = analyze(Repository(self.repo).working(), config)
+        config['gateExcludeCallers'] = [pattern]
+        result = self.evidence(config=config)
+        self.assertEqual(set(self.candidates(result)), {'billing/index.ts', 'billing/model.ts'})
+        self.assertEqual(result['modules'][0]['externalImportCount'], 2)
+        self.assertEqual(result['coverage']['excludedCallerFiles'], 1)
+        self.assertEqual(result['coverage']['excludedCallerImports'], 1)
+        self.assertEqual(analyze(Repository(self.repo).working(), config), before)
+        self.assertIn(migration, self.candidates(self.evidence('migrations', config)))
+
+    def test_gate_caller_exclusions_reject_invalid_configuration(self):
+        self.facade()
+        for patterns in ('migrations/*', [None], [''], None):
+            with self.subTest(patterns=patterns), self.assertRaisesRegex(ValueError, 'gateExcludeCallers'):
+                self.evidence(config={'gateExcludeCallers': patterns})
+
     def test_declared_policy_and_repository_are_unchanged_and_evidence_excludes_private_content(self):
         self.facade()
         self.write('billing/model.ts', 'export const value = "PRIVATE_SOURCE_SENTINEL";\n')
