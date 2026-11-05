@@ -1,4 +1,6 @@
 """Advisory entry-point evidence from the resolved import graph."""
+import fnmatch
+
 if __package__:
     from .scan import TEST, Repository, analyze
 else:
@@ -52,12 +54,20 @@ def gate_evidence(repo, config, module=None, maximum=30):
     """
     if not isinstance(maximum, int) or isinstance(maximum, bool) or not 1 <= maximum <= 100:
         raise ValueError('maximum must be an integer between 1 and 100 candidates per module')
+    excluded_patterns = config.get('gateExcludeCallers', [])
+    if not isinstance(excluded_patterns, list) or not all(isinstance(pattern, str) and pattern for pattern in excluded_patterns):
+        raise ValueError('gateExcludeCallers must be a list of nonempty source-path patterns')
     result = analyze(Repository(repo).working(), config)
     districts = {district['id']: district for district in result['districts']}
     if module is not None and module not in districts:
         raise ValueError('Unknown module: ' + str(module))
     files = {path: file for path, file in result['files'].items() if not TEST.search(path) and not path.endswith('.swift')}
     edges = [edge for edge in result['imports'] if edge['source'] in files and edge['target'] in files]
+    excluded_callers = {path for path in files if any(fnmatch.fnmatchcase(path, pattern) for pattern in excluded_patterns)}
+    excluded_imports = sum(edge['source'] in excluded_callers for edge in edges)
+    # A one-off caller need not establish an API. Keep its file as a possible
+    # target: runtime code importing the migration is still an observed entry.
+    edges = [edge for edge in edges if edge['source'] not in excluded_callers]
     output = []
     for name in sorted(districts if module is None else [module]):
         members = {path for path, file in files.items() if file['district'] == name}
@@ -100,8 +110,11 @@ def gate_evidence(repo, config, module=None, maximum=30):
     return {'modules': output,
             'coverage': {'basis': 'Resolved production Python and JavaScript/TypeScript imports, including type-only imports.',
                          'excludedTestFiles': sum(bool(TEST.search(path)) for path in result['files']),
+                         'excludedCallerFiles': len(excluded_callers),
+                         'excludedCallerImports': excluded_imports,
                          'uncheckedSwiftFiles': sum(path.endswith('.swift') for path in result['files']),
                          'limitations': ['Candidates are observed entry files, not confirmed public APIs; no gate policy is changed.',
+                                         'Configured gateExcludeCallers omit outgoing imports from this graph only; scan and check retain them.',
                                          'Reachability and dominance use paths within the current module grouping, not calls or protocols.',
                                          'Reachable and dominated counts exclude the candidate component; dominance removes its entire SCC.',
                                          'SCCs include type-only imports and do not establish runtime dependency cycles.',
