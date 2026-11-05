@@ -254,7 +254,10 @@ class Repository:
         return git(self.path, 'rev-parse', '--verify', 'HEAD').decode().strip()
 
     def merge_heads(self):
-        """Return the other parents of an in-progress merge commit."""
+        """Return the other parents of an in-progress merge commit.
+
+        Git writes MERGE_HEAD after pre-merge-commit, so an automatic merge is
+        only checkable from commit-msg onward."""
         path = Path(git(self.path, 'rev-parse', '--git-path', 'MERGE_HEAD').decode().strip())
         path = path if path.is_absolute() else self.path / path
         return path.read_text().split() if path.is_file() else []

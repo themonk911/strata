@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -81,17 +82,68 @@ class CommitChecks(unittest.TestCase):
         self.git('add', 'second.py')
         self.assertEqual([edge['source'] for edge in check(self.repo, {}, staged=True)['added']], ['second.py'])
 
+    def linked_worktree(self):
+        """Check out a committed 'feature' branch outside the main working tree."""
+        parent = tempfile.TemporaryDirectory()
+        self.addCleanup(parent.cleanup)
+        linked = Path(parent.name) / 'linked'
+        self.git('worktree', 'add', '-qb', 'feature', str(linked))
+        (linked / 'feature.py').write_text('value = 2\n')
+        subprocess.check_call(['git', '-C', str(linked), 'add', 'feature.py'])
+        subprocess.check_call(['git', '-C', str(linked), 'commit', '-qm', 'feature'])
+        return linked
+
+    def install_merge_check(self):
+        hook = self.repo / '.git/hooks/commit-msg'
+        hook.parent.mkdir(exist_ok=True)
+        scanner = Path(__file__).resolve().parents[1] / 'core/scan.py'
+        hook.write_text('#!/bin/sh\nexec %s %s check --repo "$(git rev-parse --show-toplevel)" --staged\n'
+                        % (shlex.quote(sys.executable), shlex.quote(str(scanner))))
+        hook.chmod(0o755)
+
+    def merge(self, checkout, other):
+        return subprocess.run(['git', '-C', str(checkout), 'merge', '--no-edit', other], capture_output=True, text=True)
+
+    def test_automatic_merge_passes_a_hook_with_only_the_other_parents_shortcuts(self):
+        self.boundary()
+        self.commit()
+        branch = self.git('branch', '--show-current')
+        linked = self.linked_worktree()
+        self.write('main.py', 'from billing.core import value\n')
+        self.commit()
+        self.install_merge_check()
+        merged = self.merge(linked, branch)
+        self.assertEqual(merged.returncode, 0, merged.stdout + merged.stderr)
+        parents = subprocess.check_output(['git', '-C', str(linked), 'log', '-1', '--format=%P']).decode().split()
+        self.assertEqual(len(parents), 2)
+
+    def test_automatic_merge_hook_blocks_a_shortcut_no_parent_has(self):
+        self.write('billing/__init__.py', 'value = 1\n')
+        self.write('other.py', 'value = 1\n')
+        self.commit()
+        branch = self.git('branch', '--show-current')
+        self.git('checkout', '-qb', 'target')
+        self.write('billing/core.py', 'value = 1\n')
+        self.commit()
+        self.git('checkout', '-q', branch)
+        # The import only resolves once the merge brings in its target.
+        self.write('consumer.py', 'from billing.core import value\n')
+        self.commit()
+        head = self.git('rev-parse', 'HEAD')
+        self.install_merge_check()
+        merged = self.merge(self.repo, 'target')
+        self.assertEqual(merged.returncode, 1, merged.stdout + merged.stderr)
+        self.assertEqual(self.git('rev-parse', 'HEAD'), head)
+        self.assertEqual([edge['source'] for edge in check(self.repo, {}, staged=True)['added']], ['consumer.py'])
+
     def test_merge_keeps_other_parents_shortcuts_as_debt_but_blocks_new_ones(self):
         self.boundary()
         self.commit()
         branch = self.git('branch', '--show-current')
-        self.git('worktree', 'add', '-qb', 'feature', str(self.repo / 'linked'))
-        (self.repo / 'linked/feature.py').write_text('value = 2\n')
-        subprocess.check_call(['git', '-C', str(self.repo / 'linked'), 'add', 'feature.py'])
-        subprocess.check_call(['git', '-C', str(self.repo / 'linked'), 'commit', '-qm', 'feature'])
+        linked = self.linked_worktree()
         self.write('main.py', 'from billing.core import value\n')
         self.commit()
-        for checkout, other in [(self.repo, 'feature'), (self.repo / 'linked', branch)]:
+        for checkout, other in [(self.repo, 'feature'), (linked, branch)]:
             with self.subTest(checkout=checkout.name):
                 subprocess.check_call(['git', '-C', str(checkout), 'merge', '-q', '--no-ff', '--no-commit', other])
                 merged = check(checkout, {}, staged=True)
