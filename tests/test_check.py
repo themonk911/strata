@@ -39,6 +39,23 @@ class CommitChecks(unittest.TestCase):
         return subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'core/scan.py'),
                                'check', '--repo', str(self.repo), *args], capture_output=True, text=True)
 
+    def test_missing_explicit_config_fails_instead_of_inferring_gates(self):
+        self.boundary()
+        self.commit()
+        missing = self.repo / 'missing.json'
+        for value in (str(missing), ''):
+            result = self.cli('--config', value)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertEqual(result.stdout, '')
+            self.assertIn('does not exist: ' + value, result.stderr)
+
+    def test_repository_without_config_still_checks_inferred_gates(self):
+        self.boundary()
+        self.commit()
+        result = self.cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['added'], [])
+
     def test_staged_shortcut_blocks_even_when_unstaged_repair_is_good_and_reads_do_not_mutate(self):
         self.boundary()
         self.commit()

@@ -47,7 +47,9 @@ def safe_path(p):
     return bool(p) and not p.startswith('/') and '..' not in PurePosixPath(p).parts and '\\' not in p
 
 def load_config(repo, explicit=None):
-    path = Path(explicit) if explicit else Path(repo) / 'strata.config.json'
+    if explicit is not None and not Path(explicit).is_file():
+        raise ValueError('Configured Strata policy does not exist: %s' % explicit)
+    path = Path(repo) / 'strata.config.json' if explicit is None else Path(explicit)
     config = json.loads(path.read_text()) if path.exists() else {}
     for m in config.get('modules', []):
         if not safe_path(m['path']) or any(not safe_path(p) for p in m.get('public', [])):

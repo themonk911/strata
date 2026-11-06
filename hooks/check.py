@@ -123,8 +123,6 @@ def evaluate(payload, config_path=None, languages=None):
     repo = Path(p.stdout.strip()).resolve()
     if config_path is None and not (repo / 'strata.config.json').exists():
         return {}
-    if config_path is not None and not Path(config_path).is_file():
-        raise ValueError('Configured Strata policy does not exist')
     config = load_config(repo, config_path)
     event = payload.get('hook_event_name')
     if event == 'Stop':
