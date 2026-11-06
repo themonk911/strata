@@ -255,6 +255,15 @@ class Repository:
         # Preserve the useful Git error for invalid repositories or broken refs.
         return git(self.path, 'rev-parse', '--verify', 'HEAD').decode().strip()
 
+    def merge_heads(self):
+        """Return the other parents of an in-progress merge commit.
+
+        Git writes MERGE_HEAD after pre-merge-commit, so an automatic merge is
+        only checkable from commit-msg onward."""
+        path = Path(git(self.path, 'rev-parse', '--git-path', 'MERGE_HEAD').decode().strip())
+        path = path if path.is_absolute() else self.path / path
+        return path.read_text().split() if path.is_file() else []
+
     def tree(self, revision):
         result = {}
         for entry in git(self.path, 'ls-tree', '-rz', revision).split(b'\0'):
@@ -432,19 +441,27 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000, histor
                            'History sampling uses a HEAD-based file/import record budget, not a hard byte limit; at least the first and latest commits are retained.'],
             'warnings': sorted(warnings)}, 'files': list(all_files.values()), 'snapshots': snapshots, 'changes': changes}
 
-def compare_imports(before_sources, after_sources, config, importers=None, modules=None):
-    """Compare imports under one policy, including newly inferred entry points."""
+def compare_imports(before_sources, after_sources, config, importers=None, modules=None, merged=()):
+    """Compare imports under one policy, including newly inferred entry points.
+
+    `merged` holds the sources of a merge's other parents: a shortcut already
+    present on any parent is existing debt, not one this change adds."""
+    parents = [before_sources, *merged]
     if modules is None:
         modules = config['modules'] if 'modules' in config else infer_modules(
-            set(before_sources) | set(after_sources), config.get('pythonRoots', ('', 'src')))
-    before = analyze(before_sources, config, modules, importers=importers)
+            set(after_sources).union(*parents), config.get('pythonRoots', ('', 'src')))
+    before = [analyze(sources, config, modules, importers=importers) for sources in parents]
     after = analyze(after_sources, config, modules, importers=importers)
     key = lambda edge: (edge['source'], edge['target'])
-    old, new = {key(edge) for edge in before['shortcuts']}, {key(edge) for edge in after['shortcuts']}
+    old = {}
+    for result in before:
+        for edge in result['shortcuts']:
+            old.setdefault(key(edge), edge)
+    new = {key(edge) for edge in after['shortcuts']}
     return {'before': len(old), 'after': len(new),
             'added': [edge for edge in after['shortcuts'] if key(edge) not in old],
-            'removed': [edge for edge in before['shortcuts'] if key(edge) not in new],
-            'warnings': sorted(set(before['warnings'] + after['warnings'])),
+            'removed': [edge for k, edge in old.items() if k not in new],
+            'warnings': sorted({warning for result in [*before, after] for warning in result['warnings']}),
             'gates': {'enforced': sum(not module.get('inferred') or bool(module.get('public')) for module in modules),
                       'unknown': sum(bool(module.get('inferred')) and not module.get('public') for module in modules)}}
 
@@ -462,21 +479,25 @@ def check(repo, config, base='HEAD', staged=False, languages=None):
     r = Repository(repo)
     before_sources = {} if base == 'HEAD' and r.head() is None else r.tree(base)
     after_sources = r.index() if staged else r.working()
-    paths = before_sources.keys() | after_sources.keys()
+    # The pending commit's parents are HEAD and any in-progress merge heads.
+    merge_heads = r.merge_heads() if base == 'HEAD' else []
+    merged = [r.tree(head) for head in merge_heads]
+    paths = before_sources.keys() | after_sources.keys() | {path for sources in merged for path in sources}
     excluded = {language: sum(path.endswith(suffixes) for path in paths)
                 for language, suffixes in extensions.items() if language not in selected}
     excluded = {language: count for language, count in excluded.items() if count}
-    modules = config.get('modules', infer_modules(set(before_sources) | set(after_sources), config.get('pythonRoots', ('', 'src'))))
+    modules = config.get('modules', infer_modules(set(paths), config.get('pythonRoots', ('', 'src'))))
     # Keep other supported languages available as import targets and gates.
     # Swift has no resolved imports; excluded Swift must not run lexical checks.
     if 'swift' not in selected:
         before_sources = {path: source for path, source in before_sources.items() if not path.endswith('.swift')}
         after_sources = {path: source for path, source in after_sources.items() if not path.endswith('.swift')}
+        merged = [{path: source for path, source in sources.items() if not path.endswith('.swift')} for sources in merged]
     importers = {path for path in paths if path.endswith(suffixes)}
-    result = compare_imports(before_sources, after_sources, config, importers=importers, modules=modules)
+    result = compare_imports(before_sources, after_sources, config, importers=importers, modules=modules, merged=merged)
     if 'swift' in selected and any(p.endswith('.swift') for p in paths):
         result['warnings'] = sorted(set(result['warnings'] + ['Swift import and boundary checks are unavailable; inferred type references are for layout only.']))
-    return {'base': base, 'source': 'index' if staged else 'working tree',
+    return {'base': base, 'merged': merge_heads, 'source': 'index' if staged else 'working tree',
             'scope': {'languages': [language for language in extensions if language in selected], 'excluded': excluded},
             **result}
 

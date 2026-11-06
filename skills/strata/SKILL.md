@@ -23,7 +23,7 @@ Review uncertain design choices with the user. Apply declarations within the use
 
 ## Check changes
 
-Run `strata check --repo <repo> --base HEAD` and relevant behavioral tests. Existing shortcuts do not fail a change; newly added ones do. For committed changes, use their actual pre-change base. Use `--staged` in a Git pre-commit hook to check index contents independently of unstaged edits. Exit 1 means new shortcuts; exit 2 means analysis failed or coverage is unavailable. Report coverage gaps rather than calling them a clean check.
+Run `strata check --repo <repo> --base HEAD` and relevant behavioral tests. Existing shortcuts do not fail a change; newly added ones do. For committed changes, use their actual pre-change base. Use `--staged` in a Git pre-commit hook to check index contents independently of unstaged edits. For merges, run it from `commit-msg`, not `pre-merge-commit`, because Git writes `MERGE_HEAD` too late for the earlier hook to see the other parent. Exit 1 means new shortcuts; exit 2 means analysis failed or coverage is unavailable. Report coverage gaps rather than calling them a clean check.
 
 Python and JS/TS imports use AST parsing; computed runtime resolution remains outside coverage. Swift gate checks are unavailable. An explicitly scoped `--languages python javascript typescript` check reports excluded Swift files. Tests and configured adapters are exempt. Use `strata scan --repo <repo> --working` when a refreshed city is useful.
 
