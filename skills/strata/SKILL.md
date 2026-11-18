@@ -13,6 +13,8 @@ Resolve `../../bin/strata.mjs` from this skill's directory and invoke it with No
 
 Read repository guidance and `strata.config.json`, if present. Respect existing declarations and configured aliases. A supplied `--config PATH` can hold a local policy without adding private architecture details to tracked files.
 
+A module path such as `components/*` declares each matching child directory as a separate boundary. For `--module`, use the concrete directory, such as `components/orders`.
+
 Run `strata gates --repo <repo>` to locate observed entry points, then narrow with `--module <module-path>`. Use `strata explain --repo <repo> --module <module-path>` for crossing imports. Graph output gives caller counts, directed reachability, mutually reachable groups (SCCs), dominance, and alternate entries. These measurements depend on the proposed module grouping. Type-only imports participate; an SCC does not prove a runtime cycle. Commands and runtime protocols may have no incoming imports.
 
 Follow file references locally. Read exports, actual imported symbols, implementations, callers, tests, and architecture documentation. An import of an error or type does not make the target file's whole implementation public. Separate application operations, shared contracts, adapters, executable entry points, and internal state. Consider who owns validation, lifecycle, and side effects. Do not use popularity or a low graph cut alone to declare an API.

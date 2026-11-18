@@ -54,14 +54,19 @@ Trusted Strata hooks read the saved rules on their next check; the editor does n
   "pythonRoots": ["src"],
   "modules": [
     { "path": "src/billing", "public": ["src/billing/__init__.py"] },
-    { "path": "ui/orders", "public": ["ui/orders/index.ts"] }
+    { "path": "components/*", "public": [] },
+    { "path": "components/orders", "public": ["components/orders/index.ts"] }
   ],
   "allow": ["src/adapters/*"],
   "aliases": { "@/": "ui/" }
 }
 ```
 
-Paths are repository-relative. Public paths and adapter exceptions accept glob patterns. Tests are exempt. Without declarations, module directories and entry points are inferred and visibly labeled as hypotheses. Confirm those boundaries before treating a shortcut as something to fix. Import and gate checks cover Python and JS/TS; Swift type references do not establish gate violations.
+Module paths are repository-relative. In this example, `components/*` makes each direct child directory containing analyzed source a separate private module. A newly added component is covered as soon as its files are staged for a commit. The exact declaration for `components/orders` takes precedence and exposes its `index.ts`. To expose an entry point for every component, set the glob rule’s `public` to `["components/*/index.ts"]`.
+
+In module paths, `*` matches all or part of one directory name. Use one segment per level, such as `packages/*/features/*`. Recursive `**` patterns are unsupported. Other characters are literal, including the brackets in `app/[slug]`.
+
+Public paths and adapter exceptions accept glob patterns. Tests are exempt. Without declarations, module directories and entry points are inferred and visibly labeled as hypotheses. Confirm those boundaries before treating a shortcut as something to fix. Import and gate checks cover Python and JS/TS; Swift type references do not establish gate violations.
 
 Inference recognizes outer packages with an entry point and another non-test source file, plus folders directly under `components/`, `features/`, and `packages/`. Nested implementation folders stay with their outer owner. Python uses `__init__.py`; JS/TS recognizes root `index`, `api`, `public`, and same-named component files. `bin/index.ts` and `scripts/index.ts` are commands, not inferred import gates. A folder with no recognized entry point has an **unknown public API**: its crossing imports appear as `boundaryCandidates`, not enforceable shortcuts. Explicitly saving an empty `public` list makes it private. `src` and configured Python roots remain containers. JavaScript aliases require explicit configuration; Python absolute imports search the repository root and `src` by default. Relative Python imports stay within their package. Dependency, build, and tool-state folders remain excluded.
 
