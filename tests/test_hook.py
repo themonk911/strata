@@ -42,6 +42,17 @@ class GateHook(unittest.TestCase):
         payload = {'cwd': str(self.root), 'hook_event_name': 'PreToolUse', 'tool_name': 'apply_patch', 'tool_input': {'command': '*** Begin Patch\n*** Add File: consumer.mjs\n+import { Client } from "./server/api.mjs";\n*** End Patch'}}
         self.assertEqual(hook.evaluate(payload), {})
 
+    def test_glob_checks_a_new_component_in_a_proposed_patch(self):
+        (self.root / 'strata.config.json').write_text(json.dumps({'modules': [{'path': 'components/*', 'public': []}]}))
+        patch = ('*** Begin Patch\n'
+                 '*** Add File: components/goals/store.py\n+value = 1\n'
+                 '*** Add File: components/new/main.py\n+from components.goals.store import value\n'
+                 '*** End Patch')
+        decision = hook.evaluate(self.payload('apply_patch', patch))['hookSpecificOutput']
+        self.assertEqual(decision['permissionDecision'], 'deny')
+        self.assertIn('components/new/main.py:1 -> components/goals/store.py', decision['permissionDecisionReason'])
+        self.assertFalse((self.root / 'components').exists())
+
     def test_adding_inferred_api_keeps_existing_crossing_as_debt(self):
         (self.root / 'strata.config.json').write_text('{}')
         feature = self.root / 'features/billing'

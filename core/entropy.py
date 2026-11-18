@@ -175,11 +175,13 @@ class EntropyTracker:
         self.monotonic = True
         self.previous_sources = {}
 
-    def observe(self, sources, result, timestamp, line_counts, committed=True):
+    def observe(self, sources, result, timestamp, line_counts, committed=True, modules=None):
         if self.timestamp is not None and timestamp < self.timestamp:
             self.monotonic = False
         first = self.timestamp is None
         ownership_sources = {**self.previous_sources, **sources}
+        if modules is not None:
+            self.ownership.modules = modules
         self.ownership.set_sources(ownership_sources)
         previous_import_owners = self.ownership.import_owners
         self.ownership.set_imports(result)

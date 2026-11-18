@@ -87,6 +87,23 @@ class CommitChecks(unittest.TestCase):
         self.assertEqual(self.cli('--staged').returncode, 0)
         self.assertEqual(len(check(self.repo, {})['added']), 2)
 
+    def test_staged_glob_blocks_a_shortcut_into_a_new_component(self):
+        self.write('strata.config.json', json.dumps({'modules': [{'path': 'components/*', 'public': []}]}))
+        self.write('components/orders/use.py', 'import components.billing.store\n')
+        self.commit()
+        # The staged addition resolves the existing import. An unstaged component
+        # and a working-tree repair must have no effect on the pre-commit result.
+        self.write('components/billing/store.py', 'value = 1\n')
+        self.git('add', 'components/billing/store.py')
+        self.write('components/orders/use.py', '')
+        self.write('components/local/extra.py', 'value = 2\n')
+        cli = self.cli('--staged')
+        self.assertEqual(cli.returncode, 1, cli.stderr)
+        result = json.loads(cli.stdout)
+        self.assertEqual(result['gates']['enforced'], 2)
+        self.assertEqual(result['added'], [{'source': 'components/orders/use.py',
+                                            'target': 'components/billing/store.py', 'line': 1}])
+
     def test_existing_shortcut_is_debt_but_new_importer_is_blocked(self):
         self.boundary(private=True)
         self.commit()

@@ -122,6 +122,28 @@ class BoundaryPolicy(unittest.TestCase):
         opened = self.preview([{'path': 'server', 'public': ['server/*.py']}])
         self.assertEqual(opened['shortcuts'], [])
 
+    def test_editor_preserves_module_glob_and_previews_each_sibling_boundary(self):
+        self.write('components/orders/api.py', 'from .internal import value\n')
+        self.write('components/orders/internal.py', 'value = 1\n')
+        self.write('components/cart/api.py', '')
+        self.write('components/cart/main.py', 'import components.orders.api\nimport components.orders.internal\n')
+        modules = [{'path': 'components/*', 'public': ['components/*/api.py']}]
+        preview = self.preview(modules)
+        self.assertEqual(preview['shortcuts'], [
+            {'source': 'components/cart/main.py', 'target': 'components/orders/internal.py', 'line': 2}])
+        self.save(preview)
+        self.assertEqual(load_config(self.root)['modules'], modules)
+        state = read_boundaries(self.root)
+        self.assertEqual(state['modules'], modules)
+        self.assertFalse(any(m['path'].startswith('components/') for m in state['suggestions']))
+
+        self.write('components/search/api.py', '')
+        self.write('components/search/private.py', '')
+        self.write('app/main.py', 'import components.search.private\n')
+        result = preview_boundaries(self.root, modules, state['revision'])
+        self.assertIn({'source': 'app/main.py', 'target': 'components/search/private.py', 'line': 1},
+                      result['shortcuts'])
+
     def test_invalid_and_ambiguous_modules_are_rejected(self):
         invalid = [None, {}, ['server'], [{'path': '../server', 'public': []}],
                    [{'path': './server', 'public': []}], [{'path': 'server/', 'public': []}],
@@ -129,7 +151,7 @@ class BoundaryPolicy(unittest.TestCase):
                    [{'path': 'server', 'public': ['../api.py']}],
                    [{'path': 'server', 'public': ['app/main.py']}],
                    [{'path': 'server', 'public': ['server/missing.py']}],
-                   [{'path': 'absent', 'public': []}], self.modules * 2]
+                   [{'path': 'absent', 'public': []}], [{'path': 'absent/*', 'public': []}], self.modules * 2]
         revision = read_boundaries(self.root)['revision']
         for modules in invalid:
             with self.subTest(modules=modules), self.assertRaises(ValueError):
@@ -146,6 +168,17 @@ class BoundaryPolicy(unittest.TestCase):
         modules[0]['public'] = ['server/api.py']
         modules[1]['public'] = ['server/nested/api.py']
         self.assertEqual(self.preview(modules)['modules'], modules)
+
+    def test_nested_globs_cover_submodules_and_exact_gate_keeps_directory_name_literal(self):
+        self.write('features/data/[id]/api.ts', '')
+        self.write('features/data/s/api.ts', '')
+        self.write('main.ts', 'import "./features/data/[id]/api";\nimport "./features/data/s/api";')
+        rules = [{'path': 'features/*', 'public': []}, {'path': 'features/data/*', 'public': []},
+                 {'path': 'features/data/[id]', 'public': ['features/data/[id]/api.ts']}]
+        preview = self.preview(rules)
+        self.assertEqual([e['target'] for e in preview['shortcuts']], ['features/data/s/api.ts'])
+        self.save(preview)
+        self.assertEqual(read_boundaries(self.root)['modules'], rules)
 
     def test_missing_or_changed_preview_cannot_be_saved(self):
         preview = self.preview()

@@ -102,6 +102,53 @@ def module_for(p, modules):
     parts = p.split('/')[:-1]
     return '/'.join(parts[:3]) or '(root)'
 
+def expand_modules(modules, paths, require_matches=False):
+    """Instantiate directory patterns from analyzed paths, including in Git snapshots."""
+    patterns = [module for module in modules if '*' in module['path']]
+    if not patterns:
+        return modules
+    directories = {}
+    for path in paths:
+        if safe_path(path) and CODE.search(path) and not SKIP.search(path):
+            parent = path.rpartition('/')[0]
+            while parent and parent not in directories:
+                directories[parent] = parent.split('/')
+                parent = parent.rpartition('/')[0]
+    concrete = {module['path']: module for module in modules if '*' not in module['path']}
+    explicit = set(concrete)
+    for module in patterns:
+        pattern = module['path']
+        if '**' in pattern:
+            raise ValueError('Recursive ** is unsupported in module paths: ' + pattern)
+        # Only * is special in a module path, and it cannot cross a slash.
+        parts = pattern.replace('[', '[[]').replace('?', '[?]').split('/')
+        matches = sorted(path for path, names in directories.items() if len(names) == len(parts)
+                         and all(fnmatch.fnmatchcase(name, part) for name, part in zip(names, parts)))
+        if require_matches and not matches:
+            raise ValueError('Module pattern matches no analyzed directories: ' + pattern)
+        gates = module.get('public', [])
+        if any(gate != pattern and not gate.startswith(pattern + '/') for gate in gates):
+            raise ValueError('Public gates must start with their module pattern: ' + pattern)
+        for path in matches:
+            if path in explicit:
+                continue
+            if path in concrete:
+                raise ValueError('Multiple module patterns match ' + path + '. Declare that path explicitly.')
+            public = [path + gate[len(pattern):] for gate in gates]
+            concrete[path] = {**module, 'path': path, 'public': public}
+    return list(concrete.values())
+
+def configured_modules(config, paths):
+    if 'modules' in config:
+        return expand_modules(config['modules'], paths)
+    return infer_modules(paths, config.get('pythonRoots', ('', 'src')))
+
+def matches_gate(path, module, pattern):
+    # The concrete directory (for example app/[slug]) is a literal prefix.
+    if pattern == module or pattern.startswith(module + '/'):
+        return path.startswith(module) and fnmatch.fnmatchcase(path[len(module):], pattern[len(module):])
+    return fnmatch.fnmatchcase(path, pattern)
+
 def resolve_py(parts, paths, roots):
     for root in roots:
         base = '/'.join(([root] if root else []) + parts)
@@ -176,13 +223,14 @@ def extract_imports(p, text, paths, config, parsed_js=None):
 def analyze(sources, config, modules=None, importers=None, import_cache=None):
     sources = {p: text for p, text in sources.items() if safe_path(p) and CODE.search(p) and not SKIP.search(p)}
     paths = set(sources)
-    modules = modules if modules is not None else config['modules'] if 'modules' in config else infer_modules(paths, config.get('pythonRoots', ('', 'src')))
+    if modules is None:
+        modules = configured_modules(config, paths)
     module_map = {m['path']: m for m in modules}
     unknown_gates = {m['path'] for m in modules if m.get('inferred') and not m.get('public')}
     files = {p: {'path': p, 'district': module_for(p, modules), 'lines': len(t.splitlines()), 'gate': False} for p, t in sources.items()}
     for p, f in files.items():
         mod = module_map.get(f['district'])
-        f['gate'] = bool(mod and any(fnmatch.fnmatchcase(p, pattern) for pattern in mod.get('public', [])))
+        f['gate'] = bool(mod and any(matches_gate(p, mod['path'], pattern) for pattern in mod.get('public', [])))
     edges, shortcuts, boundary_candidates, warnings = [], [], [], []
     selected = sources if importers is None else {p: text for p, text in sources.items() if p in importers}
     parsed_js = parse_js_sources({p: text for p, text in selected.items() if not p.endswith(('.py', '.swift')) and (import_cache is None or p not in import_cache)})
@@ -332,8 +380,12 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000, histor
     head_sources = repo.tree(head) if head else {}
     # An unborn checkout still has a useful city: its current source files.
     working_sources = repo.working() if working or head is None else None
-    modules = config.get('modules', infer_modules(set(head_sources) | set(working_sources or {}), config.get('pythonRoots', ('', 'src'))))
-    head_result = analyze(head_sources, config, modules)
+    # Keep inferred ownership fixed at the tip. Declared patterns also apply to
+    # directories that existed only in an earlier snapshot.
+    rules = config['modules'] if 'modules' in config else infer_modules(
+        head_sources.keys() | (working_sources or {}).keys(), config.get('pythonRoots', ('', 'src')))
+    head_modules = expand_modules(rules, head_sources)
+    head_result = analyze(head_sources, config, head_modules)
     records_per_snapshot = max(1, len(head_result['files']) + len(head_result['imports']) + len(head_result['inferredReferences']))
     budget_limit = max(2, maximum_records // records_per_snapshot - (working_sources is not None))
     limit = min(maximum, budget_limit)
@@ -344,7 +396,7 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000, histor
     shallow = git(repo.path, 'rev-parse', '--is-shallow-repository').strip() == b'true' if head else False
     entropy = None
     if history_analysis:
-        ownership = Ownership(modules, config, module_for, lambda p: bool(TEST.search(p)))
+        ownership = Ownership(head_modules, config, module_for, lambda p: bool(TEST.search(p)))
         params = entropy_settings(config)
         rework = ReworkTracker(ownership.owner, window_days=params['reworkDays'], cohort_days=params['reworkCohortDays'])
         entropy = EntropyTracker(config, ownership, rework, history_complete=not shallow)
@@ -365,9 +417,11 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000, histor
         else:
             for path, source in sources.items():
                 if previous_sources.get(path) != source: import_cache.pop(path, None)
+        # Include removed paths for ownership of deletions in history metrics.
+        modules = expand_modules(rules, sources.keys() | previous_sources.keys())
         result = head_result if sha == head else analyze(sources, config, modules, import_cache=import_cache)
         if entropy is not None:
-            entropy.observe(sources, result, timestamp, numstats.get(sha, {}))
+            entropy.observe(sources, result, timestamp, numstats.get(sha, {}), modules=modules)
         previous_sources = sources
         if sha not in sampled_shas: continue
         entropy_values = entropy.values(timestamp) if entropy is not None else sampled_values(result, config)
@@ -386,11 +440,12 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000, histor
         snapshots.append({'date': date, 'timestamp': timestamp, 'revision': sha[:12], **result})
         print('Scanning %s %s (%d/%d analyzed commits; %d/%d views)' % (date, sha[:12], i + 1, len(observed), len(snapshots), len(sampled)), file=sys.stderr)
     if working_sources is not None:
+        modules = expand_modules(rules, working_sources.keys() | head_sources.keys())
         result = analyze(working_sources, config, modules)
         warnings.update(result.pop('warnings'))
         timestamp = int(dt.datetime.now(dt.timezone.utc).timestamp())
         if entropy is not None:
-            entropy.observe(working_sources, result, timestamp, {}, committed=False)
+            entropy.observe(working_sources, result, timestamp, {}, committed=False, modules=modules)
         entropy_values = entropy.values(timestamp) if entropy is not None else sampled_values(result, config)
         result['entropy'] = entropy_values['repo']
         for district in result['districts']: district['entropy'] = entropy_values['districts'][district['id']]
@@ -423,7 +478,7 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000, histor
                 'sampled': len(sampled) < len(commits),
                 'limitedByRecordBudget': budget_limit < min(maximum, len(commits))}
     return {'schemaVersion': 1, 'meta': {'name': config.get('name', repo.path.name), 'private': config.get('private', True),
-            'revision': head, 'entropy': entropy_meta, 'sampling': sampling, 'gatePolicy': 'declared' if 'modules' in config and not any(m.get('inferred') for m in modules) else 'inferred from directory conventions and public entry points',
+            'revision': head, 'entropy': entropy_meta, 'sampling': sampling, 'gatePolicy': 'declared' if 'modules' in config and not any(m.get('inferred') for m in rules) else 'inferred from directory conventions and public entry points',
             'coverage': 'Python and JS/TS imports use ASTs. Swift files contribute size, activity, rework, scatter and change diffs; type-name references are inferred for layout only, not resolved imports or gate checks. Swift build targets, type checking, macros and conditional compilation are not resolved. Computed imports, external packages and runtime resolution may be missed.',
             'limitations': ['Boundary pressure is not a validated entropy or defect predictor.',
                            'Inferred boundaries are hypotheses. With no recognized public entry point, incoming imports are review candidates, not confirmed violations.',
@@ -435,8 +490,7 @@ def scan(repo, config, maximum=70, working=False, maximum_records=100000, histor
 def compare_imports(before_sources, after_sources, config, importers=None, modules=None):
     """Compare imports under one policy, including newly inferred entry points."""
     if modules is None:
-        modules = config['modules'] if 'modules' in config else infer_modules(
-            set(before_sources) | set(after_sources), config.get('pythonRoots', ('', 'src')))
+        modules = configured_modules(config, before_sources.keys() | after_sources.keys())
     before = analyze(before_sources, config, modules, importers=importers)
     after = analyze(after_sources, config, modules, importers=importers)
     key = lambda edge: (edge['source'], edge['target'])
@@ -466,7 +520,7 @@ def check(repo, config, base='HEAD', staged=False, languages=None):
     excluded = {language: sum(path.endswith(suffixes) for path in paths)
                 for language, suffixes in extensions.items() if language not in selected}
     excluded = {language: count for language, count in excluded.items() if count}
-    modules = config.get('modules', infer_modules(set(before_sources) | set(after_sources), config.get('pythonRoots', ('', 'src'))))
+    modules = configured_modules(config, paths)
     # Keep other supported languages available as import targets and gates.
     # Swift has no resolved imports; excluded Swift must not run lexical checks.
     if 'swift' not in selected:

@@ -153,6 +153,28 @@ class RepositoryHistory(unittest.TestCase):
         self.assertNotIn('a.py', data['snapshots'][1]['files'])
         self.assertEqual(data['snapshots'][2]['files']['a.py']['changed'], data['snapshots'][2]['timestamp'])
 
+    def test_glob_applies_to_historical_and_working_tree_only_directories(self):
+        path = 'components/retired/inner/model.py'
+        self.write(path, 'value = 1\n')
+        self.write('main.py', 'import components.retired.inner.model\n')
+        self.commit()
+        self.write(path, 'value = 3\n')
+        self.commit()
+        (self.repo / path).unlink()
+        self.commit()
+        self.write('components/new/inner/store.py', 'value = 2\n')
+        self.write('main.py', 'import components.new.inner.store\n')
+        config = {'modules': [{'path': 'components/*', 'public': []}]}
+        with contextlib.redirect_stderr(io.StringIO()):
+            data = scan(self.repo, config, working=True, history_analysis=True)
+        retired, edited, removed, working = data['snapshots']
+        self.assertEqual(retired['files'][path]['district'], 'components/retired')
+        self.assertEqual([e['target'] for e in retired['shortcuts']], [path])
+        district = next(d for d in edited['districts'] if d['id'] == 'components/retired')
+        self.assertEqual(district['entropy']['signals']['scatter']['changes'], 1)
+        self.assertEqual(removed['shortcuts'], [])
+        self.assertEqual([e['target'] for e in working['shortcuts']], ['components/new/inner/store.py'])
+
     def test_check_reports_added_removed_and_existing_shortcuts(self):
         self.boundary()
         self.commit()

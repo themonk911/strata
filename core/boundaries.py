@@ -1,5 +1,4 @@
 """Explicit boundary-policy editing; analysis and previews remain read-only."""
-import fnmatch
 import hashlib
 import json
 import os
@@ -7,7 +6,7 @@ from pathlib import Path, PurePosixPath
 import stat
 import tempfile
 
-from .scan import Repository, analyze, git, infer_modules, module_for, safe_path
+from .scan import Repository, analyze, expand_modules, git, infer_modules, matches_gate, module_for, safe_path
 
 
 def _root(repo):
@@ -57,13 +56,11 @@ def _policy(root, config=None):
     return effective, revision, mode, provenance, original
 
 
-def _path(value, label, pattern=False):
+def _path(value, label):
     if (not isinstance(value, str) or not safe_path(value) or value == '.'
             or PurePosixPath(value).as_posix() != value or value.strip() != value
             or any(ord(char) < 32 for char in value)):
         raise ValueError('%s must be a canonical repository-relative path.' % label)
-    if not pattern and any(char in value for char in '*?['):
-        raise ValueError('%s must name a module, not a glob pattern.' % label)
     return value
 
 
@@ -81,23 +78,26 @@ def _modules(value, sources=None):
         gates = entry.get('public', [])
         if not isinstance(gates, list):
             raise ValueError('Public gates must be an array for module ' + path)
-        gates = [_path(gate, 'Public gate', pattern=True) for gate in gates]
+        gates = [_path(gate, 'Public gate') for gate in gates]
         if len(gates) != len(set(gates)):
             raise ValueError('Public gates must not repeat within module ' + path)
         if any(gate != path and not gate.startswith(path + '/') for gate in gates):
             raise ValueError('Public gates must be inside their module: ' + path)
         result.append({'path': path, 'public': gates})
-    if sources is not None:
-        for entry in result:
+    if sources is not None and result:
+        expanded = expand_modules(result, sources, require_matches=True)
+        owners = {source: module_for(source, expanded) for source in sources}
+        # A glob can match a parent whose files all belong to nested modules.
+        missing = {entry['path'] for entry in result if '*' not in entry['path']} - set(owners.values())
+        if missing:
+            raise ValueError('Module has no analyzed source files: ' + min(missing))
+        for entry in expanded:
             path = entry['path']
-            owned = {source for source in sources if module_for(source, result) == path}
-            if not owned:
-                raise ValueError('Module has no analyzed source files: ' + path)
             for gate in entry['public']:
-                matches = {source for source in sources if fnmatch.fnmatchcase(source, gate)}
+                matches = {source for source in sources if matches_gate(source, path, gate)}
                 if not matches:
                     raise ValueError('Public gate matches no analyzed source files: ' + gate)
-                if not matches <= owned:
+                if any(owners[source] != path for source in matches):
                     raise ValueError('Public gate belongs to another declared module: ' + gate)
     return result
 
@@ -124,7 +124,7 @@ def read_boundaries(repo, config=None):
     entries = settings.get('modules', [])
     normalized = _modules(entries)
     modules = [entry for entry, original in zip(normalized, entries) if not original.get('inferred')]
-    declared = {entry['path'] for entry in modules}
+    declared = {entry['path'] for entry in expand_modules(modules, sources)}
     suggestions = {entry['path']: {'path': entry['path'], 'public': entry['public']}
                    for entry in infer_modules(sources, settings.get('pythonRoots', ('', 'src'))) if entry['path'] not in declared}
     suggestions.update({entry['path']: entry for entry, original in zip(normalized, entries) if original.get('inferred')})

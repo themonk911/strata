@@ -31,6 +31,31 @@ class Boundaries(unittest.TestCase):
         self.files['app/tax/report.py'] = 'from app.basis import engine\n'
         self.assertEqual(len(analyze(self.files, self.config)['shortcuts']), 1)
 
+    def test_glob_boundaries_match_directories_by_segment_and_exact_paths_override(self):
+        sources = {'packages/web/features/[id]/nested/view.ts': 'import "../index";',
+                   'packages/web/features/[id]/index.ts': '',
+                   'packages/web/features/orders/index.ts': '',
+                   'packages/web/lib/features/deep/index.ts': '',
+                   'packages/web/features/main.ts': 'import "./[id]/index"; import "./orders/index";'}
+        pattern = {'path': 'packages/*/features/*', 'public': ['packages/*/features/*/index.ts']}
+        closed = {'path': 'packages/web/features/orders', 'public': []}
+        for rules in ([pattern, closed], [closed, pattern]):
+            result = analyze(sources, {'modules': rules})
+            declared = {d['id'] for d in result['districts'] if d['gateStatus'] == 'declared'}
+            self.assertEqual(declared, {'packages/web/features/[id]', 'packages/web/features/orders'})
+            self.assertEqual(result['files']['packages/web/features/[id]/nested/view.ts']['district'],
+                             'packages/web/features/[id]')
+            self.assertEqual(result['shortcuts'], [{'source': 'packages/web/features/main.ts',
+                             'target': 'packages/web/features/orders/index.ts', 'line': 1}])
+
+    def test_overlapping_globs_require_an_explicit_rule_for_the_shared_directory(self):
+        config = {'modules': [{'path': 'app/*', 'public': []}, {'path': 'app/ba*', 'public': []}]}
+        with self.assertRaisesRegex(ValueError, 'app/basis'):
+            analyze(self.files, config)
+        config['modules'].append({'path': 'app/basis', 'public': ['app/basis/__init__.py']})
+        result = analyze(self.files, config)
+        self.assertTrue(result['files']['app/basis/__init__.py']['gate'])
+
     def test_tests_and_declared_adapters_are_exempt(self):
         self.files['tests/test_report.py'] = 'from app.basis.engine import calculate\n'
         self.files['app/routes/api.py'] = 'from app.basis.engine import calculate\n'
